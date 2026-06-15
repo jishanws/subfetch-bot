@@ -155,6 +155,23 @@ The `/subtitle` command returns inline buttons such as `English BluRay` or
 `Bengali WEBRip`. Select a button to download and receive the subtitle file
 directly in Telegram.
 
+## Sync Assistant
+
+After sending a downloaded `.srt` subtitle, the bot asks whether the timing is
+correct. You can reply naturally:
+
+```text
+perfect
+too fast
+too slow
+2s early
+3s late
+```
+
+If subtitles appear too early or too fast, the bot delays them. If subtitles
+appear too late or too slow, the bot shifts them earlier and sends a corrected
+`.synced.srt` file.
+
 Supported subtitle file types:
 
 - `.srt`

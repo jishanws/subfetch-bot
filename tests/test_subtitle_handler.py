@@ -1,6 +1,8 @@
 """Tests for subtitle response formatting."""
 
 from types import SimpleNamespace
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -13,6 +15,7 @@ from bot.handlers.subtitle import (
     get_download_retry_after,
     mark_download_attempt,
     parse_download_callback_data,
+    retain_subtitle_for_sync,
     select_subtitle_results,
     write_temp_subtitle_file,
     _last_download_by_user,
@@ -20,6 +23,7 @@ from bot.handlers.subtitle import (
 )
 from bot.models.subtitle_result import SubtitleResult
 from bot.services.conversation_state_service import (
+    pending_sync_requests,
     pending_episode_requests,
 )
 from bot.services.title_resolution_service import TitleResolution
@@ -126,6 +130,29 @@ class SubtitleHandlerTests(unittest.TestCase):
 
         with self.assertRaises(FileNotFoundError):
             open(path, "rb")
+
+    def test_downloaded_subtitle_stores_pending_sync_state(self) -> None:
+        pending_sync_requests.clear()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "subtitle.srt"
+            source_path.write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nHi\n",
+                encoding="utf-8",
+            )
+
+            retained_path = retain_subtitle_for_sync(
+                1001,
+                str(source_path),
+                "Movie Subtitle.srt",
+            )
+
+        self.assertIsNotNone(retained_path)
+        self.assertIn(1001, pending_sync_requests)
+        self.assertEqual(pending_sync_requests[1001].original_file_name, "Movie Subtitle.srt")
+        self.assertTrue(pending_sync_requests[1001].file_path.exists())
+        pending_sync_requests[1001].file_path.unlink()
+        pending_sync_requests.clear()
 
 
 class SubtitleHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):

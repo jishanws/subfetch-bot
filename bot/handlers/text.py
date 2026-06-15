@@ -1,15 +1,25 @@
 """Natural-language text message handler."""
 
 import logging
+from pathlib import Path
 
+from telegram import Message
+from telegram.error import TelegramError
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.handlers.help import send_help_message
 from bot.handlers.search import run_search_query
 from bot.handlers.subtitle import run_subtitle_query
-from bot.services.conversation_state_service import ConversationStateService
+from bot.services.conversation_state_service import (
+    ConversationStateService,
+    PendingSyncRequest,
+)
+from bot.services.groq_service import GroqService
 from bot.services.intent_service import Intent, IntentService
+from bot.services.subtitle_sync_service import SubtitleSyncError, SubtitleSyncService
+from bot.services.sync_intent_service import SyncIntent, SyncIntentService
+from config import ConfigError, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +38,9 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     message = update.message.text.strip()
     logger.info("Received text message: %s", message)
+
+    if await handle_pending_sync_reply(update, message):
+        return
 
     if await handle_pending_episode_reply(update, message):
         return
@@ -55,6 +68,136 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(
         "I did not understand that yet. Try a title like interstellar subtitle, "
         "or send help."
+    )
+
+
+async def handle_pending_sync_reply(update: Update, message: str) -> bool:
+    """Handle a reply to the subtitle sync assistant."""
+    if update.message is None or update.effective_user is None:
+        return False
+
+    state_service = ConversationStateService()
+    user_id = update.effective_user.id
+    pending_request = state_service.get_pending_sync_request(user_id)
+    if pending_request is None:
+        return False
+
+    if state_service.is_pending_sync_expired(pending_request):
+        logger.info("Pending sync request expired user_id=%s", user_id)
+        state_service.clear_pending_sync_request(user_id)
+        await update.message.reply_text(
+            "That subtitle session expired. Download the subtitle again to sync it."
+        )
+        return True
+
+    sync_result = build_sync_intent_service().classify(message)
+
+    if sync_result.intent is SyncIntent.PERFECT:
+        logger.info("Subtitle sync marked perfect user_id=%s", user_id)
+        state_service.clear_pending_sync_request(user_id)
+        await update.message.reply_text("Great. Enjoy the movie 🎬")
+        return True
+
+    if sync_result.intent is SyncIntent.NEED_AMOUNT:
+        if pending_request.direction is None:
+            await update.message.reply_text("About how much? Try: 1s, 2s, 5s")
+            return True
+        await apply_subtitle_sync(
+            update.message,
+            user_id,
+            pending_request,
+            pending_request.direction,
+            sync_result.amount_seconds,
+        )
+        return True
+
+    if sync_result.intent is SyncIntent.TOO_EARLY:
+        if sync_result.amount_seconds is None:
+            state_service.set_pending_sync_direction(user_id, "early")
+            await update.message.reply_text("About how much? Try: 1s, 2s, 5s")
+            return True
+        await apply_subtitle_sync(
+            update.message,
+            user_id,
+            pending_request,
+            "early",
+            sync_result.amount_seconds,
+        )
+        return True
+
+    if sync_result.intent is SyncIntent.TOO_LATE:
+        if sync_result.amount_seconds is None:
+            state_service.set_pending_sync_direction(user_id, "late")
+            await update.message.reply_text("About how much? Try: 1s, 2s, 5s")
+            return True
+        await apply_subtitle_sync(
+            update.message,
+            user_id,
+            pending_request,
+            "late",
+            sync_result.amount_seconds,
+        )
+        return True
+
+    await update.message.reply_text(
+        "Reply with perfect, too fast, too slow, 2s early, or 3s late."
+    )
+    return True
+
+
+async def apply_subtitle_sync(
+    message: Message,
+    user_id: int,
+    pending_request: PendingSyncRequest,
+    direction: str,
+    amount_seconds: float | None,
+) -> None:
+    """Apply a sync shift and send the corrected subtitle file."""
+    if amount_seconds is None:
+        await message.reply_text("About how much? Try: 1s, 2s, 5s")
+        return
+
+    shift_seconds = amount_seconds if direction == "early" else -amount_seconds
+    corrected_path: Path | None = None
+
+    try:
+        corrected_path = SubtitleSyncService().shift_srt_file(
+            pending_request.file_path,
+            pending_request.original_file_name,
+            shift_seconds,
+        )
+        with corrected_path.open("rb") as subtitle_file:
+            await message.reply_document(
+                document=subtitle_file,
+                filename=corrected_path.name,
+                caption="Synced subtitle file",
+            )
+    except (SubtitleSyncError, OSError, TelegramError):
+        logger.exception("Subtitle sync failed user_id=%s", user_id)
+        await message.reply_text("I could not sync that subtitle file. Download it again.")
+        return
+    finally:
+        ConversationStateService().clear_pending_sync_request(user_id)
+        if corrected_path is not None:
+            try:
+                corrected_path.unlink()
+            except FileNotFoundError:
+                pass
+            try:
+                corrected_path.parent.rmdir()
+            except OSError:
+                pass
+
+
+def build_sync_intent_service() -> SyncIntentService:
+    """Build sync intent classification with Groq as unknown-only fallback."""
+    try:
+        settings = get_settings()
+    except ConfigError:
+        return SyncIntentService()
+
+    return SyncIntentService(
+        GroqService(settings.groq_api_key.get_secret_value())
     )
 
 

@@ -71,6 +71,47 @@ class GroqService:
         content = self._extract_content(data)
         return self._parse_corrected_query(content)
 
+    def classify_sync_message(self, message: str) -> str:
+        """Classify a subtitle sync message as perfect, early, late, or unknown."""
+        message = message.strip()
+        if not message:
+            return "unknown"
+
+        payload = {
+            "model": self.MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Classify subtitle sync message. Return JSON only.\n"
+                        "Options: perfect, early, late, unknown.\n"
+                        f'Text: "{message}"'
+                    ),
+                }
+            ],
+            "temperature": 0,
+            "max_tokens": 30,
+        }
+
+        try:
+            response = self._session.post(
+                self.BASE_URL,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            logger.exception("Groq sync intent request failed.")
+            raise GroqServiceError("Groq sync intent classification failed.") from exc
+
+        content = self._extract_content(data)
+        return self._parse_sync_intent(content)
+
     def _extract_content(self, data: Any) -> str:
         if not isinstance(data, dict):
             raise GroqServiceError("Groq returned an invalid response.")
@@ -112,3 +153,25 @@ class GroqService:
 
         corrected = corrected.strip()
         return corrected or None
+
+    def _parse_sync_intent(self, content: str) -> str:
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                raise GroqServiceError("Groq did not return JSON.") from exc
+            parsed = json.loads(content[start : end + 1])
+
+        if not isinstance(parsed, dict):
+            raise GroqServiceError("Groq JSON was not an object.")
+
+        intent = parsed.get("intent") or parsed.get("sync")
+        if not isinstance(intent, str):
+            raise GroqServiceError("Groq JSON did not include intent.")
+
+        intent = intent.strip().lower()
+        if intent not in {"perfect", "early", "late", "unknown"}:
+            return "unknown"
+        return intent

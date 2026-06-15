@@ -2,11 +2,14 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import re
 
 
 PENDING_EPISODE_TTL = timedelta(minutes=10)
+PENDING_SYNC_TTL = timedelta(minutes=30)
 pending_episode_requests: dict[int, "PendingEpisodeRequest"] = {}
+pending_sync_requests: dict[int, "PendingSyncRequest"] = {}
 
 
 @dataclass(frozen=True)
@@ -19,6 +22,16 @@ class PendingEpisodeRequest:
     normalized_title: str
     year: int | None
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class PendingSyncRequest:
+    """Pending subtitle sync request for a user."""
+
+    file_path: Path
+    original_file_name: str
+    created_at: datetime
+    direction: str | None = None
 
 
 class ConversationStateService:
@@ -68,6 +81,55 @@ class ConversationStateService:
         """Clear a user's pending episode request."""
         pending_episode_requests.pop(user_id, None)
 
+    def store_pending_sync_request(
+        self,
+        user_id: int,
+        request: PendingSyncRequest,
+    ) -> None:
+        """Store a pending sync request for a Telegram user."""
+        self.clear_pending_sync_request(user_id)
+        pending_sync_requests[user_id] = request
+
+    def get_pending_sync_request(
+        self,
+        user_id: int,
+    ) -> PendingSyncRequest | None:
+        """Return a pending sync request if one exists."""
+        return pending_sync_requests.get(user_id)
+
+    def set_pending_sync_direction(self, user_id: int, direction: str) -> None:
+        """Store the known sync direction while waiting for an amount."""
+        request = pending_sync_requests.get(user_id)
+        if request is None:
+            return
+        pending_sync_requests[user_id] = PendingSyncRequest(
+            file_path=request.file_path,
+            original_file_name=request.original_file_name,
+            created_at=request.created_at,
+            direction=direction,
+        )
+
+    def is_pending_sync_expired(
+        self,
+        request: PendingSyncRequest,
+        now: datetime | None = None,
+    ) -> bool:
+        """Return whether a pending sync request has expired."""
+        current_time = now or datetime.now(timezone.utc)
+        return current_time - request.created_at > PENDING_SYNC_TTL
+
+    def clear_pending_sync_request(
+        self,
+        user_id: int,
+        cleanup_file: bool = True,
+    ) -> None:
+        """Clear a user's pending sync request and optionally remove its files."""
+        request = pending_sync_requests.pop(user_id, None)
+        if request is None or not cleanup_file:
+            return
+
+        self._cleanup_sync_file(request.file_path)
+
     def parse_episode(self, message: str) -> tuple[int, int] | None:
         """Parse a season/episode pair from text."""
         for pattern in (
@@ -88,3 +150,15 @@ class ConversationStateService:
     ) -> str:
         """Combine a pending TV title with a parsed episode token."""
         return f"{request.normalized_title} S{season:02d}E{episode:02d}"
+
+    def _cleanup_sync_file(self, file_path: Path) -> None:
+        """Remove a retained subtitle sync file if it exists."""
+        try:
+            file_path.unlink()
+        except FileNotFoundError:
+            return
+
+        try:
+            file_path.parent.rmdir()
+        except OSError:
+            return

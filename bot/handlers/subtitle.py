@@ -3,9 +3,11 @@
 import logging
 import os
 import re
+import shutil
 import tempfile
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.error import TelegramError
@@ -15,6 +17,7 @@ from bot.models.subtitle_result import SubtitleResult
 from bot.services.conversation_state_service import (
     ConversationStateService,
     PendingEpisodeRequest,
+    PendingSyncRequest,
 )
 from bot.services.opensubtitles_service import (
     InvalidSubtitleQueryError,
@@ -47,6 +50,16 @@ SEASON_EPISODE_PATTERN = re.compile(
 MAX_SUBTITLE_RESULTS = 10
 DOWNLOAD_CALLBACK_PREFIX = "download_subtitle"
 DOWNLOAD_COOLDOWN_SECONDS = 15.0
+SYNC_STORAGE_ROOT = Path("tmp/sync")
+SYNC_PROMPT = (
+    "Is the subtitle timing okay?\n\n"
+    "Reply with something like:\n\n"
+    "* perfect\n"
+    "* too fast\n"
+    "* too slow\n"
+    "* subtitles appear 2 seconds early\n"
+    "* subtitles appear 3 seconds late"
+)
 _last_download_by_user: dict[int, float] = {}
 
 
@@ -217,6 +230,13 @@ async def subtitle_download_callback(
                 filename=download.file_name,
                 caption="Subtitle file",
             )
+        retained_path = retain_subtitle_for_sync(
+            query.from_user.id,
+            temp_path,
+            download.file_name,
+        )
+        if retained_path is not None:
+            await query.message.reply_text(SYNC_PROMPT)
         await query.answer("Subtitle sent.")
     except TelegramError:
         logger.exception("Telegram failed to upload subtitle file.")
@@ -331,3 +351,47 @@ def cleanup_temp_file(path: str) -> None:
         return
     except OSError:
         logger.exception("Failed to clean up temporary subtitle file path=%s", path)
+
+
+def retain_subtitle_for_sync(
+    user_id: int,
+    source_path: str,
+    original_file_name: str,
+) -> Path | None:
+    """Keep a downloaded SRT file for a short sync-assistant session."""
+    if Path(original_file_name).suffix.lower() != ".srt":
+        logger.info("Skipping sync retention for unsupported subtitle file=%s", original_file_name)
+        return None
+
+    safe_name = build_safe_sync_file_name(original_file_name)
+    user_dir = SYNC_STORAGE_ROOT / str(user_id)
+    retained_path = user_dir / safe_name
+    try:
+        user_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, retained_path)
+    except OSError:
+        logger.exception("Failed to retain subtitle for sync user_id=%s", user_id)
+        return None
+
+    ConversationStateService().store_pending_sync_request(
+        user_id,
+        PendingSyncRequest(
+            file_path=retained_path,
+            original_file_name=original_file_name,
+            created_at=datetime.now(timezone.utc),
+        ),
+    )
+    logger.info(
+        "Stored pending sync request user_id=%s file=%s",
+        user_id,
+        retained_path,
+    )
+    return retained_path
+
+
+def build_safe_sync_file_name(file_name: str) -> str:
+    """Build a safe local sync file name from a provider file name."""
+    suffix = Path(file_name).suffix.lower() or ".srt"
+    stem = Path(file_name).stem or "subtitle"
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "subtitle"
+    return f"{safe_stem}{suffix}"
