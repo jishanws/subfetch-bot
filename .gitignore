@@ -1,25 +1,16 @@
 # Python bytecode and caches
 __pycache__/
 *.py[cod]
-*$py.class
+*.so
+*.egg-info/
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
 .coverage
-coverage.xml
 htmlcov/
 
 # Virtual environments
 .venv/
 venv/
 env/
-ENV/
-
-# Build artifacts
-build/
-dist/
-*.egg-info/
-pip-wheel-metadata/
 
 # Environment and secrets
 .env
@@ -35,20 +26,19 @@ pip-wheel-metadata/
 *.db-shm
 
 # Logs and runtime files
-*.log
 logs/
+*.log
+
+# Telegram bot temporary files
 tmp/
 temp/
+downloads/
 
 # macOS
 .DS_Store
-.AppleDouble
-.LSOverride
-Icon?
-._*
 
 # VS Code
 .vscode/
-!.vscode/extensions.json
-!.vscode/settings.json
 
+# JetBrains
+.idea/

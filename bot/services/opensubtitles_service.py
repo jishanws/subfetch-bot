@@ -212,7 +212,10 @@ class OpenSubtitlesService:
             raise OpenSubtitlesServiceError("OpenSubtitles returned an invalid response.") from exc
 
         if not isinstance(payload, dict):
-            logger.error("OpenSubtitles returned unexpected payload type=%s", type(payload).__name__)
+            logger.error(
+                "OpenSubtitles returned unexpected payload type=%s",
+                type(payload).__name__,
+            )
             raise OpenSubtitlesServiceError("OpenSubtitles returned an invalid response.")
 
         return payload
@@ -245,7 +248,10 @@ class OpenSubtitlesService:
             raise OpenSubtitlesRateLimitError("Too many download requests.")
 
         if response.status_code >= 500:
-            logger.error("OpenSubtitles download API unavailable with status=%s", response.status_code)
+            logger.error(
+                "OpenSubtitles download API unavailable with status=%s",
+                response.status_code,
+            )
             raise OpenSubtitlesDowntimeError("OpenSubtitles is unavailable.")
 
         try:
@@ -265,7 +271,10 @@ class OpenSubtitlesService:
             raise OpenSubtitlesServiceError("OpenSubtitles returned an invalid response.") from exc
 
         if not isinstance(payload, dict):
-            logger.error("OpenSubtitles POST returned unexpected payload type=%s", type(payload).__name__)
+            logger.error(
+                "OpenSubtitles POST returned unexpected payload type=%s",
+                type(payload).__name__,
+            )
             raise OpenSubtitlesServiceError("OpenSubtitles returned an invalid response.")
 
         return payload
@@ -289,13 +298,19 @@ class OpenSubtitlesService:
             raise OpenSubtitlesFileUnavailableError("Subtitle file is unavailable.")
 
         if response.status_code >= 500:
-            logger.error("OpenSubtitles file host unavailable with status=%s", response.status_code)
+            logger.error(
+                "OpenSubtitles file host unavailable with status=%s",
+                response.status_code,
+            )
             raise OpenSubtitlesDowntimeError("OpenSubtitles file host is unavailable.")
 
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:
-            logger.exception("OpenSubtitles file download failed with status=%s", response.status_code)
+            logger.exception(
+                "OpenSubtitles file download failed with status=%s",
+                response.status_code,
+            )
             raise OpenSubtitlesServiceError("Subtitle download failed.") from exc
 
         if not response.content:

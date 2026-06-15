@@ -3,8 +3,8 @@
 subfetch-bot is a production-oriented Telegram bot for finding, downloading,
 and eventually synchronizing subtitles for movies and TV shows.
 
-This repository is currently in the bootstrap stage. Subtitle search,
-download, and synchronization workflows are intentionally not implemented yet.
+This repository is under active phased development. Subtitle search and
+download are implemented; subtitle synchronization is planned for a later phase.
 
 ## Roadmap
 
@@ -18,10 +18,11 @@ download, and synchronization workflows are intentionally not implemented yet.
 
 ## Current Features
 
-- `/start` - Show the welcome message
+- `/start` - Initialize the bot and show the welcome message
 - `/help` - Show available commands
 - `/search <query>` - Resolve movie and TV show names through TMDb
-- `/subtitle <query>` - Identify content through TMDb and show subtitle metadata
+- `/subtitle <query>` - Identify content, show subtitle choices, and send the selected file
+- Natural-language chat mode for common search and subtitle requests
 
 ## Project Structure
 
@@ -83,12 +84,31 @@ Start the bot in polling mode:
 python main.py
 ```
 
+## How to Stop the Bot Locally
+
+Stop any local polling process and remove the bot lock file:
+
+```bash
+scripts/stop_bot.sh
+```
+
+The bot stores its local polling PID in `/tmp/subfetch-bot.lock`. If the PID is
+dead or belongs to another process, startup removes the stale lock
+automatically.
+
 Available commands:
 
-- `/start` - Show the welcome message
+- `/start` - Initialize the bot and show the welcome message
 - `/help` - Show available commands
 - `/search <query>` - Show the top 5 TMDb movie and TV matches
-- `/subtitle <query>` - Show the top 5 OpenSubtitles matches after TMDb identification
+- `/subtitle <query>` - Show inline subtitle choices after TMDb identification
+
+Natural-language messages are also supported. The bot uses deterministic rules
+for this phase; Groq or other AI classification is not used.
+
+Telegram sends `/start` automatically when a user presses the blue Start button.
+`/start` initializes the bot; repeated `/start` calls return a short reminder
+instead of repeating the full welcome text.
 
 Example searches:
 
@@ -98,7 +118,7 @@ Example searches:
 /search dark
 ```
 
-Subtitle metadata search examples:
+Subtitle search examples:
 
 ```text
 /subtitle breaking bad s02e05
@@ -106,5 +126,40 @@ Subtitle metadata search examples:
 /subtitle dark s01e03
 ```
 
-The `/subtitle` command only searches and displays subtitle metadata in this
-phase. Subtitle downloading is intentionally reserved for Phase 4.
+Natural-language examples:
+
+```text
+interstellar subtitle
+find subtitle for breaking bad season 2 episode 5
+dark s01e03 english subtitle
+search breaking bad
+avatar 2009 subtitle
+help
+```
+
+Intent rules:
+
+- Messages containing `subtitle`, `sub`, `srt`, or `caption` search subtitles
+- Messages starting with `search`, `find movie`, `movie`, `series`, or `tv`
+  search TMDb titles
+- `help` and `what can you do` show the help message
+- Plain title-like messages default to subtitle search
+
+Selection replies such as `1` are not processed yet. The bot replies with:
+
+```text
+Selection mode is coming soon. For now, search subtitles directly, e.g. interstellar subtitle
+```
+
+The `/subtitle` command returns inline buttons such as `English BluRay` or
+`Bengali WEBRip`. Select a button to download and receive the subtitle file
+directly in Telegram.
+
+Supported subtitle file types:
+
+- `.srt`
+- `.ass`
+- `.sub`
+
+Downloads are locally rate-limited per Telegram user. Temporary files are
+removed after each upload attempt.

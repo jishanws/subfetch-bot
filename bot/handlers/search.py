@@ -2,7 +2,7 @@
 
 import logging
 
-from telegram import Update
+from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from bot.models.search_result import SearchResult
@@ -28,29 +28,36 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Usage: /search <movie or TV show name>")
         return
 
+    await run_search_query(update.message, query)
+
+
+async def run_search_query(message: Message, query: str) -> None:
+    """Resolve a movie or TV show query using TMDb."""
+    logger.info("Running TMDb search for query=%s", query)
+
     try:
         settings = get_settings()
         service = TmdbService(settings.tmdb_api_key.get_secret_value())
         results = service.multi_search(query)[:5]
     except ConfigError:
         logger.exception("Search command failed because configuration is invalid.")
-        await update.message.reply_text("Search is not configured yet. Please check TMDB_API_KEY.")
+        await message.reply_text("Search is not configured yet. Please check TMDB_API_KEY.")
         return
     except InvalidTmdbApiKeyError:
-        await update.message.reply_text("TMDb rejected the configured API key.")
+        await message.reply_text("TMDb rejected the configured API key.")
         return
     except TmdbNoResultsError:
-        await update.message.reply_text("No matching movies or TV shows found.")
+        await message.reply_text("No matching movies or TV shows found.")
         return
     except TmdbNetworkError:
-        await update.message.reply_text("Could not reach TMDb. Please try again later.")
+        await message.reply_text("Could not reach TMDb. Please try again later.")
         return
     except TmdbServiceError:
         logger.exception("Search command failed due to a TMDb service error.")
-        await update.message.reply_text("Search failed. Please try again later.")
+        await message.reply_text("Search failed. Please try again later.")
         return
 
-    await update.message.reply_text(format_search_results(results))
+    await message.reply_text(format_search_results(results))
 
 
 def format_search_results(results: list[SearchResult]) -> str:
@@ -65,4 +72,3 @@ def format_search_results(results: list[SearchResult]) -> str:
             lines.append("")
 
     return "\n".join(lines)
-

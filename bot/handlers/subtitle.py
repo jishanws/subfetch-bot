@@ -5,12 +5,17 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime, timezone
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from bot.models.subtitle_result import SubtitleResult
+from bot.services.conversation_state_service import (
+    ConversationStateService,
+    PendingEpisodeRequest,
+)
 from bot.services.opensubtitles_service import (
     InvalidSubtitleQueryError,
     OpenSubtitlesAuthenticationError,
@@ -22,12 +27,24 @@ from bot.services.opensubtitles_service import (
     OpenSubtitlesService,
     OpenSubtitlesServiceError,
 )
+from bot.services.groq_service import GroqService
+from bot.services.subtitle_ranking_service import (
+    SubtitleRankingService,
+    detect_resolution,
+    detect_source,
+    format_download_count,
+)
+from bot.services.title_resolution_service import TitleResolutionService
 from bot.services.tmdb_service import TmdbNoResultsError, TmdbService, TmdbServiceError
 from config import ConfigError, get_settings
 
 logger = logging.getLogger(__name__)
 
-SEASON_EPISODE_PATTERN = re.compile(r"\bs\d{1,2}e\d{1,2}\b", flags=re.IGNORECASE)
+SEASON_EPISODE_PATTERN = re.compile(
+    r"\b(?:s\d{1,2}\s*e\d{1,3}|season\s+\d{1,2}\s+episode\s+\d{1,3})\b",
+    flags=re.IGNORECASE,
+)
+MAX_SUBTITLE_RESULTS = 10
 DOWNLOAD_CALLBACK_PREFIX = "download_subtitle"
 DOWNLOAD_COOLDOWN_SECONDS = 15.0
 _last_download_by_user: dict[int, float] = {}
@@ -43,48 +60,90 @@ async def subtitle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Usage: /subtitle <movie or TV show name>")
         return
 
+    await run_subtitle_query(update.message, query)
+
+
+async def run_subtitle_query(message: Message, query: str) -> None:
+    """Resolve content through TMDb, then search OpenSubtitles metadata."""
+    logger.info("Running subtitle search for query=%s", query)
+
     try:
         settings = get_settings()
         tmdb_service = TmdbService(settings.tmdb_api_key.get_secret_value())
-        identification_query = build_tmdb_identification_query(query)
-        tmdb_service.multi_search(identification_query)
+        title_resolution = TitleResolutionService(
+            tmdb_service=tmdb_service,
+            groq_service=GroqService(settings.groq_api_key.get_secret_value()),
+        ).resolve_user_query(query)
+
+        if title_resolution.needs_episode:
+            if message.from_user is not None:
+                ConversationStateService().store_pending_episode_request(
+                    message.from_user.id,
+                    PendingEpisodeRequest(
+                        tmdb_id=title_resolution.tmdb_id,
+                        title=title_resolution.title,
+                        original_query=query,
+                        normalized_title=title_resolution.title,
+                        year=title_resolution.year,
+                        created_at=datetime.now(timezone.utc),
+                    ),
+                )
+                logger.info(
+                    "Stored pending episode request user_id=%s title=%s tmdb_id=%s",
+                    message.from_user.id,
+                    title_resolution.title,
+                    title_resolution.tmdb_id,
+                )
+
+            await message.reply_text(
+                "Which episode do you need?\n\n"
+                f"Example:\n{title_resolution.title} S01E01"
+            )
+            return
 
         subtitles_service = OpenSubtitlesService(
             settings.opensubtitles_api_key.get_secret_value()
         )
-        subtitles = subtitles_service.search_subtitles(query)[:5]
+        subtitle_query = title_resolution.normalized_query
+        subtitles = select_subtitle_results(
+            subtitles_service.search_subtitles(subtitle_query),
+            subtitle_query,
+        )
     except ConfigError:
         logger.exception("Subtitle command failed because configuration is invalid.")
-        await update.message.reply_text(
+        await message.reply_text(
             "Subtitle search is not configured yet. Please check TMDB_API_KEY "
             "and OPENSUBTITLES_API_KEY."
         )
         return
     except TmdbNoResultsError:
-        await update.message.reply_text("I could not identify that movie or TV show.")
+        await message.reply_text(
+            "I couldn't find a match. Try including the full title, year, "
+            "or episode format like: dark s01e03"
+        )
         return
     except TmdbServiceError:
         logger.exception("TMDb identification failed during subtitle search.")
-        await update.message.reply_text("Could not identify the title. Please try again later.")
+        await message.reply_text("Could not identify the title. Please try again later.")
         return
     except InvalidSubtitleQueryError:
-        await update.message.reply_text("Please provide a valid subtitle search query.")
+        await message.reply_text("Please provide a valid subtitle search query.")
         return
     except OpenSubtitlesAuthenticationError:
-        await update.message.reply_text("OpenSubtitles rejected the configured API key.")
+        await message.reply_text("OpenSubtitles rejected the configured API key.")
         return
     except OpenSubtitlesNoResultsError:
-        await update.message.reply_text("No subtitles found.")
+        await message.reply_text("No subtitles found.")
         return
     except OpenSubtitlesDowntimeError:
-        await update.message.reply_text("OpenSubtitles is unavailable. Please try again later.")
+        await message.reply_text("OpenSubtitles is unavailable. Please try again later.")
         return
     except OpenSubtitlesServiceError:
         logger.exception("OpenSubtitles search failed.")
-        await update.message.reply_text("Subtitle search failed. Please try again later.")
+        await message.reply_text("Subtitle search failed. Please try again later.")
         return
 
-    await update.message.reply_text(
+    await message.reply_text(
         "Choose a subtitle:",
         reply_markup=build_subtitle_keyboard(subtitles),
     )
@@ -100,8 +159,6 @@ async def subtitle_download_callback(
     query = update.callback_query
     if query is None:
         return
-
-    await query.answer()
 
     file_id = parse_download_callback_data(query.data or "")
     if file_id is None:
@@ -160,6 +217,7 @@ async def subtitle_download_callback(
                 filename=download.file_name,
                 caption="Subtitle file",
             )
+        await query.answer("Subtitle sent.")
     except TelegramError:
         logger.exception("Telegram failed to upload subtitle file.")
         await query.answer("Telegram upload failed. Please try again.", show_alert=True)
@@ -206,9 +264,24 @@ def build_subtitle_keyboard(results: list[SubtitleResult]) -> InlineKeyboardMark
 
 def build_subtitle_button_label(result: SubtitleResult) -> str:
     """Build a compact subtitle button label."""
-    release_name = result.release_name or result.file_name
-    label = f"{result.language_label} {release_name}".strip()
+    release_text = result.release_name or result.file_name
+    resolution = detect_resolution(release_text)
+    source = detect_source(release_text)
+    quality = " ".join(part for part in (resolution, source) if part != "Unknown")
+    label = (
+        f"{result.language_label} | {quality or 'Unknown'} | "
+        f"{format_download_count(result.download_count)}"
+    )
     return label[:64]
+
+
+def select_subtitle_results(
+    results: list[SubtitleResult],
+    query: str,
+) -> list[SubtitleResult]:
+    """Rank subtitle results, then keep the top Telegram display options."""
+    ranked_results = SubtitleRankingService().rank(results, query)
+    return ranked_results[:MAX_SUBTITLE_RESULTS]
 
 
 def build_download_callback_data(file_id: str) -> str:
