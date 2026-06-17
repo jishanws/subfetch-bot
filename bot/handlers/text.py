@@ -43,10 +43,56 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     message = update.message.text.strip()
     logger.info("Received text message: %s", message)
 
+    intent_service = IntentService()
+    intent_result = intent_service.classify(message)
+
+    normalized = intent_service._normalize(message)
+    lowered = normalized.lower()
+
+    has_episode = intent_service._contains_episode_pattern(normalized)
+    cleaned_of_episode = intent_service.COMPACT_EPISODE_PATTERN.sub("", normalized)
+    cleaned_of_episode = intent_service.SEASON_EPISODE_PATTERN.sub("", cleaned_of_episode).strip()
+    has_title_with_episode = has_episode and bool(cleaned_of_episode)
+
+    is_explicit_subtitle_search = bool(
+        intent_service.SEARCH_PREFIX_PATTERN.match(normalized) or
+        intent_service._contains_subtitle_term(lowered)
+    )
+
+    user_id = update.effective_user.id if update.effective_user else None
+
+    # Priority A & B1: Explicit searches or TV episode queries with titles
+    if is_explicit_subtitle_search or has_title_with_episode:
+        if user_id:
+            ConversationStateService().clear_pending_episode_request(user_id)
+            ConversationStateService().clear_pending_sync_request(user_id)
+        if intent_result.intent is Intent.SEARCH_TITLE and intent_result.query:
+            await run_search_query(update.message, intent_result.query)
+            return
+        if intent_result.intent is Intent.FIND_SUBTITLE and intent_result.query:
+            await run_subtitle_query(update.message, intent_result.query)
+            return
+
+    # Priority C: Pending episode request
+    if await handle_pending_episode_reply(update, message):
+        return
+
+    # Priority B2: TV episode queries without titles ("s01e01")
+    # Must never enter sync workflow
+    if has_episode:
+        if user_id:
+            ConversationStateService().clear_pending_sync_request(user_id)
+        if intent_result.intent is Intent.FIND_SUBTITLE and intent_result.query:
+            await run_subtitle_query(update.message, intent_result.query)
+            return
+
+    # Priority D: Sync workflow
     if await handle_pending_sync_reply(update, message):
         return
 
-    if await handle_pending_episode_reply(update, message):
+    # Priority E: Greeting/help
+    if intent_result.intent is Intent.HELP:
+        await send_help_message(update.message)
         return
 
     if await handle_human_conversation_reply(update, message):
@@ -57,12 +103,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(SELECTION_MODE_MESSAGE)
         return
 
-    intent_result = IntentService().classify(message)
-
-    if intent_result.intent is Intent.HELP:
-        await send_help_message(update.message)
-        return
-
+    # Fallback for bare titles
     if intent_result.intent is Intent.SEARCH_TITLE and intent_result.query:
         await run_search_query(update.message, intent_result.query)
         return
@@ -118,10 +159,7 @@ async def handle_pending_sync_reply(update: Update, message: str) -> bool:
     if state_service.is_pending_sync_expired(pending_request):
         logger.info("Pending sync request expired user_id=%s", user_id)
         state_service.clear_pending_sync_request(user_id)
-        await update.message.reply_text(
-            "That subtitle session expired. Download the subtitle again to sync it."
-        )
-        return True
+        return False
 
     sync_result = build_sync_intent_service().classify(message)
 
@@ -133,7 +171,7 @@ async def handle_pending_sync_reply(update: Update, message: str) -> bool:
 
     if sync_result.intent is SyncIntent.NEED_AMOUNT:
         if pending_request.direction is None:
-            await update.message.reply_text(SYNC_AMOUNT_PROMPT)
+            await update.message.reply_text("Type the timing difference, for example:\n2s\n3.5 seconds\n5 sec")
             return True
         await apply_subtitle_sync(
             update.message,
@@ -146,28 +184,30 @@ async def handle_pending_sync_reply(update: Update, message: str) -> bool:
 
     if sync_result.intent is SyncIntent.TOO_EARLY:
         if sync_result.amount_seconds is None:
-            state_service.set_pending_sync_direction(user_id, "early")
-            await update.message.reply_text(SYNC_AMOUNT_PROMPT)
+            state_service.set_pending_sync_direction(user_id, "before_speech")
+            from bot.handlers.subtitle import build_sync_amount_keyboard
+            await update.message.reply_text("How far off is it?", reply_markup=build_sync_amount_keyboard())
             return True
         await apply_subtitle_sync(
             update.message,
             user_id,
             pending_request,
-            "early",
+            "before_speech",
             sync_result.amount_seconds,
         )
         return True
 
     if sync_result.intent is SyncIntent.TOO_LATE:
         if sync_result.amount_seconds is None:
-            state_service.set_pending_sync_direction(user_id, "late")
-            await update.message.reply_text(SYNC_AMOUNT_PROMPT)
+            state_service.set_pending_sync_direction(user_id, "after_speech")
+            from bot.handlers.subtitle import build_sync_amount_keyboard
+            await update.message.reply_text("How far off is it?", reply_markup=build_sync_amount_keyboard())
             return True
         await apply_subtitle_sync(
             update.message,
             user_id,
             pending_request,
-            "late",
+            "after_speech",
             sync_result.amount_seconds,
         )
         return True
@@ -187,10 +227,10 @@ async def apply_subtitle_sync(
 ) -> None:
     """Apply a sync shift and send the corrected subtitle file."""
     if amount_seconds is None:
-        await message.reply_text(SYNC_AMOUNT_PROMPT)
+        await message.reply_text("Type the timing difference, for example:\n2s\n3.5 seconds\n5 sec")
         return
 
-    shift_seconds = amount_seconds if direction == "early" else -amount_seconds
+    shift_seconds = amount_seconds if direction in ("early", "before_speech") else -amount_seconds
     corrected_path: Path | None = None
 
     try:
@@ -199,18 +239,24 @@ async def apply_subtitle_sync(
             pending_request.original_file_name,
             shift_seconds,
         )
+        from bot.handlers.subtitle import build_sync_fixed_keyboard
         with corrected_path.open("rb") as subtitle_file:
             await message.reply_document(
                 document=subtitle_file,
                 filename=corrected_path.name,
-                caption="Synced subtitle file",
+                caption="Did that fix it?",
+                reply_markup=build_sync_fixed_keyboard()
             )
+        
+        import shutil
+        shutil.copy2(corrected_path, pending_request.file_path)
+        
     except (SubtitleSyncError, OSError, TelegramError):
         logger.exception("Subtitle sync failed user_id=%s", user_id)
         await message.reply_text("I could not sync that subtitle file. Download it again.")
+        ConversationStateService().clear_pending_sync_request(user_id)
         return
     finally:
-        ConversationStateService().clear_pending_sync_request(user_id)
         if corrected_path is not None:
             try:
                 corrected_path.unlink()

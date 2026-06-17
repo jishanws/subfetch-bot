@@ -53,10 +53,7 @@ EPISODE_CALLBACK_PREFIX = "episode"
 SYNC_CALLBACK_PREFIX = "sync"
 DOWNLOAD_COOLDOWN_SECONDS = 15.0
 SYNC_STORAGE_ROOT = Path("tmp/sync")
-SYNC_PROMPT = (
-    "Is the subtitle synchronized?\n\n"
-    "You can also reply: perfect, too fast, too slow, 2s early, or 3s late."
-)
+SYNC_PROMPT = "What are you seeing?"
 _last_download_by_user: dict[int, float] = {}
 
 
@@ -295,23 +292,48 @@ async def handle_sync_callback(update: Update, callback_data: str) -> bool:
         return True
 
     action = callback_data.removeprefix(f"{SYNC_CALLBACK_PREFIX}:")
-    if action == "perfect":
+    
+    if action in ("perfect", "fixed"):
         state_service.clear_pending_sync_request(query.from_user.id)
-        await query.answer("Marked perfect.")
+        await query.answer("Marked fixed.")
         if query.message is not None:
             await query.message.reply_text("Great. Enjoy the movie 🎬")
         return True
-    if action == "early":
-        state_service.set_pending_sync_direction(query.from_user.id, "early")
-        await query.answer("How much?")
+
+    if action in ("before_speech", "after_speech"):
+        state_service.set_pending_sync_direction(query.from_user.id, action)
+        await query.answer()
         if query.message is not None:
-            await query.message.reply_text("How much?\nExamples:\n1s\n2s\n5s")
+            await query.message.reply_text(
+                "How far off is it?",
+                reply_markup=build_sync_amount_keyboard()
+            )
         return True
-    if action == "late":
-        state_service.set_pending_sync_direction(query.from_user.id, "late")
-        await query.answer("How much?")
+
+    if action == "custom":
+        await query.answer()
         if query.message is not None:
-            await query.message.reply_text("How much?\nExamples:\n1s\n2s\n5s")
+            await query.message.reply_text("Type the timing difference, for example:\n2s\n3.5 seconds\n5 sec")
+        return True
+
+    if action.startswith("amount:"):
+        amount_str = action.removeprefix("amount:")
+        try:
+            amount = float(amount_str)
+        except ValueError:
+            await query.answer("Invalid amount.", show_alert=True)
+            return True
+            
+        await query.answer()
+        if query.message is not None:
+            from bot.handlers.text import apply_subtitle_sync
+            await apply_subtitle_sync(
+                query.message,
+                query.from_user.id,
+                pending_request,
+                pending_request.direction,
+                amount,
+            )
         return True
 
     await query.answer("Invalid sync action.", show_alert=True)
@@ -368,29 +390,78 @@ def build_episode_keyboard() -> InlineKeyboardMarkup:
 
 
 def build_sync_keyboard() -> InlineKeyboardMarkup:
-    """Build inline buttons for subtitle sync feedback."""
+    """Build inline buttons for initial subtitle sync feedback."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(text="✅ Looks good", callback_data="sync:perfect")],
+            [InlineKeyboardButton(text="💬 Text appears before people speak", callback_data="sync:before_speech")],
+            [InlineKeyboardButton(text="💬 Text appears after people speak", callback_data="sync:after_speech")],
+        ]
+    )
+
+
+def build_sync_amount_keyboard() -> InlineKeyboardMarkup:
+    """Build inline buttons for subtitle sync amount selection."""
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(text="Perfect", callback_data="sync:perfect"),
-                InlineKeyboardButton(text="Too Early", callback_data="sync:early"),
-                InlineKeyboardButton(text="Too Late", callback_data="sync:late"),
+                InlineKeyboardButton(text="1 sec", callback_data="sync:amount:1"),
+                InlineKeyboardButton(text="2 sec", callback_data="sync:amount:2"),
+                InlineKeyboardButton(text="3 sec", callback_data="sync:amount:3"),
+            ],
+            [
+                InlineKeyboardButton(text="5 sec", callback_data="sync:amount:5"),
+                InlineKeyboardButton(text="10 sec", callback_data="sync:amount:10"),
+                InlineKeyboardButton(text="Custom", callback_data="sync:custom"),
             ]
+        ]
+    )
+
+
+def build_sync_fixed_keyboard() -> InlineKeyboardMarkup:
+    """Build inline buttons for iterative subtitle sync feedback."""
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(text="✅ Yes, fixed", callback_data="sync:fixed")],
+            [InlineKeyboardButton(text="💬 Still before speech", callback_data="sync:before_speech")],
+            [InlineKeyboardButton(text="💬 Still after speech", callback_data="sync:after_speech")],
         ]
     )
 
 
 def build_subtitle_button_label(result: SubtitleResult) -> str:
     """Build a compact subtitle button label."""
-    release_text = result.release_name or result.file_name
+    raw_release = result.release_name or result.file_name
+    if not raw_release:
+        release_text = "Unknown release"
+    else:
+        release_text = re.sub(r"\.(srt|ass|sub|vtt)$", "", raw_release, flags=re.IGNORECASE)
+        release_text = re.sub(r"\s+", " ", release_text).strip()
+
+    if not release_text:
+        release_text = "Unknown release"
+
     resolution = detect_resolution(release_text)
     source = detect_source(release_text)
     quality = " ".join(part for part in (resolution, source) if part != "Unknown")
-    label = (
-        f"{result.language_label} | {quality or 'Unknown'} | "
-        f"{format_download_count(result.download_count)}"
-    )
-    return label[:64]
+    
+    downloads = format_download_count(result.download_count).replace(" downloads", "")
+    bottom_line = f"{result.language_label} | {quality or 'Unknown'} | {downloads}"
+    
+    max_release_length = 64 - 1 - len(bottom_line)
+    
+    if len(release_text) > max_release_length:
+        if max_release_length > 10:
+            keep_start = max_release_length - 8
+            release_text = f"{release_text[:keep_start]}...{release_text[-5:]}"
+        elif max_release_length > 3:
+            release_text = f"{release_text[:max_release_length - 3]}..."
+        else:
+            release_text = ""
+            
+    if release_text:
+        return f"{release_text}\n{bottom_line}"
+    return bottom_line[:64]
 
 
 def select_subtitle_results(

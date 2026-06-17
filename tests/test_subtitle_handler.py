@@ -88,8 +88,74 @@ class SubtitleHandlerTests(unittest.TestCase):
         keyboard = build_subtitle_keyboard([result])
         button = keyboard.inline_keyboard[0][0]
 
-        self.assertEqual(button.text, "English | BluRay | 12k downloads")
+        self.assertEqual(button.text, "BluRay\nEnglish | BluRay | 12k")
         self.assertEqual(button.callback_data, "download_subtitle:101")
+
+    def test_build_subtitle_button_label_formatting(self) -> None:
+        from bot.handlers.subtitle import build_subtitle_button_label
+
+        # Preferred format: Release name \n English | 1080p BluRay | 39.0k
+        result = SubtitleResult(
+            subtitle_id="1",
+            file_id="101",
+            language="en",
+            file_name="GOT.S05E07.1080p.BDRip.srt",
+            download_count=39000,
+            hearing_impaired=False,
+            release_name="Game.Of.Thrones.S05E07.The.Gift.1080p.BDRip",
+        )
+        label = build_subtitle_button_label(result)
+        self.assertEqual(
+            label,
+            "Game.Of.Thrones.S05E07.The....BDRip\nEnglish | 1080p BluRay | 39k",
+        )
+
+        # Fallback to file name, removes extension
+        result2 = SubtitleResult(
+            subtitle_id="2",
+            file_id="102",
+            language="en",
+            file_name="Dark.S01E03.1080p.WEB-DL.srt",
+            download_count=1200,
+            hearing_impaired=False,
+            release_name="",
+        )
+        label2 = build_subtitle_button_label(result2)
+        self.assertEqual(
+            label2,
+            "Dark.S01E03.1080p.WEB-DL\nEnglish | 1080p WEB-DL | 1.2k",
+        )
+
+        # Truncates middle safely if very long
+        result3 = SubtitleResult(
+            subtitle_id="3",
+            file_id="103",
+            language="en",
+            file_name="Some.Very.Long.Release.Name.That.Exceeds.Telegram.Button.Length.Limits.1080p.WEB-DL.srt",
+            download_count=100,
+            hearing_impaired=False,
+            release_name="",
+        )
+        label3 = build_subtitle_button_label(result3)
+        self.assertLessEqual(len(label3), 64)
+        self.assertTrue(label3.startswith("Some.Very.Long.Release.N"))
+        self.assertTrue("...EB-DL\nEnglish" in label3)
+
+        # Fallback for completely missing release
+        result4 = SubtitleResult(
+            subtitle_id="4",
+            file_id="104",
+            language="en",
+            file_name=" ",
+            download_count=10,
+            hearing_impaired=False,
+            release_name="",
+        )
+        label4 = build_subtitle_button_label(result4)
+        self.assertEqual(
+            label4,
+            "Unknown release\nEnglish | Unknown | 10",
+        )
 
     def test_build_episode_keyboard(self) -> None:
         keyboard = build_episode_keyboard()
@@ -102,13 +168,14 @@ class SubtitleHandlerTests(unittest.TestCase):
 
     def test_build_sync_keyboard(self) -> None:
         keyboard = build_sync_keyboard()
-        buttons = keyboard.inline_keyboard[0]
+        buttons = keyboard.inline_keyboard
 
-        self.assertEqual([button.text for button in buttons], ["Perfect", "Too Early", "Too Late"])
-        self.assertEqual(
-            [button.callback_data for button in buttons],
-            ["sync:perfect", "sync:early", "sync:late"],
-        )
+        self.assertEqual(buttons[0][0].text, "✅ Looks good")
+        self.assertEqual(buttons[0][0].callback_data, "sync:perfect")
+        self.assertEqual(buttons[1][0].text, "💬 Text appears before people speak")
+        self.assertEqual(buttons[1][0].callback_data, "sync:before_speech")
+        self.assertEqual(buttons[2][0].text, "💬 Text appears after people speak")
+        self.assertEqual(buttons[2][0].callback_data, "sync:after_speech")
 
     def test_select_subtitle_results_respects_top_10_limit_after_ranking(self) -> None:
         results = [
@@ -233,7 +300,7 @@ class SubtitleHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):
             "Cancelled. Send a title when you're ready."
         )
 
-    async def test_sync_early_button_asks_for_amount(self) -> None:
+    async def test_sync_before_speech_button_asks_for_amount(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "subtitle.srt"
             file_path.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
@@ -243,15 +310,18 @@ class SubtitleHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):
                 created_at=datetime.now(timezone.utc),
                 direction=None,
             )
-            update = build_callback_update(1001, "sync:early")
+            update = build_callback_update(1001, "sync:before_speech")
 
-            await subtitle_download_callback(update, None)
+            from bot.handlers.subtitle import handle_sync_callback
+            await handle_sync_callback(update, "sync:before_speech")
 
-        update.callback_query.answer.assert_awaited_once_with("How much?")
-        update.callback_query.message.reply_text.assert_awaited_once_with(
-            "How much?\nExamples:\n1s\n2s\n5s"
+        update.callback_query.answer.assert_awaited_once_with()
+        update.callback_query.message.reply_text.assert_awaited_once()
+        self.assertEqual(
+            update.callback_query.message.reply_text.await_args.args[0],
+            "How far off is it?",
         )
-        self.assertEqual(pending_sync_requests[1001].direction, "early")
+        self.assertEqual(pending_sync_requests[1001].direction, "before_speech")
 
 
 def fake_settings() -> SimpleNamespace:
