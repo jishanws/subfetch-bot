@@ -4,15 +4,15 @@ import logging
 import uuid
 from difflib import SequenceMatcher
 
-from bot.models.subtitle_result import SubtitleDownload, SubtitleResult
+from bot.models.subtitle_result import SubtitleDownload, SubtitleResult, MAX_SUBTITLE_RESULTS
 from bot.services.subtitle_providers.base import SubtitleProvider
 from bot.services.subtitle_ranking_service import SubtitleRankingService
 
 logger = logging.getLogger(__name__)
 
+
 # In-memory mapping of file_id to SubtitleResult for download routing
 _download_cache: dict[str, SubtitleResult] = {}
-
 
 class SubtitleAggregatorService:
     """Aggregates and deduplicates subtitles from multiple providers."""
@@ -55,7 +55,7 @@ class SubtitleAggregatorService:
             return []
 
         deduplicated = self._deduplicate(all_results)
-        ranked = self._ranking_service.rank(deduplicated, query)[:10]
+        ranked = self._ranking_service.rank(deduplicated, query)[:MAX_SUBTITLE_RESULTS]
         
         # Cache results for download and assign short file_ids
         for result in ranked:

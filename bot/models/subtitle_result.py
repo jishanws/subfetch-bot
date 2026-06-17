@@ -4,6 +4,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+MAX_SUBTITLE_RESULTS = 12
+
 
 class SubtitleResult(BaseModel):
     """Normalized subtitle metadata returned by OpenSubtitles or SubDL."""

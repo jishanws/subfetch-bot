@@ -13,7 +13,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from bot.models.subtitle_result import SubtitleResult
+from bot.models.subtitle_result import SubtitleDownload, SubtitleResult, MAX_SUBTITLE_RESULTS
 from bot.services.conversation_state_service import (
     ConversationStateService,
     PendingEpisodeRequest,
@@ -47,7 +47,6 @@ SEASON_EPISODE_PATTERN = re.compile(
     r"\b(?:s\d{1,2}\s*e\d{1,3}|season\s+\d{1,2}\s+episode\s+\d{1,3})\b",
     flags=re.IGNORECASE,
 )
-MAX_SUBTITLE_RESULTS = 10
 DOWNLOAD_CALLBACK_PREFIX = "download_subtitle"
 EPISODE_CALLBACK_PREFIX = "episode"
 SYNC_CALLBACK_PREFIX = "sync"

@@ -177,7 +177,7 @@ class SubtitleHandlerTests(unittest.TestCase):
         self.assertEqual(buttons[2][0].text, "💬 Text appears after people speak")
         self.assertEqual(buttons[2][0].callback_data, "sync:after_speech")
 
-    def test_select_subtitle_results_respects_top_10_limit_after_ranking(self) -> None:
+    def test_select_subtitle_results_respects_top_limit_after_ranking(self) -> None:
         results = [
             SubtitleResult(
                 subtitle_id=str(index),
@@ -188,13 +188,13 @@ class SubtitleHandlerTests(unittest.TestCase):
                 hearing_impaired=False,
                 release_name=f"Dark.S01E03.1080p.WEB-DL.{index}",
             )
-            for index in range(11)
+            for index in range(15)
         ]
 
         selected = select_subtitle_results(results, "dark s01e03")
 
-        self.assertEqual(len(selected), 10)
-        self.assertEqual(selected[0].file_id, "10")
+        self.assertEqual(len(selected), 12)
+        self.assertEqual(selected[0].file_id, "14")
 
     def test_download_callback_data_round_trip(self) -> None:
         callback_data = build_download_callback_data("101")

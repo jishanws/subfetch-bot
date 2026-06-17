@@ -103,7 +103,7 @@ class AggregatorTests(unittest.TestCase):
         results = self.aggregator.search_subtitles(query="test")
         self.assertEqual(len(results), 1)
 
-    def test_top_10_limit_respected(self):
+    def test_top_limit_respected(self):
         os_results = []
         for i in range(15):
             os_results.append(SubtitleResult(subtitle_id=str(i), file_id=str(i), language="en", file_name=f"file{i}.srt", download_count=100-i, source="opensubtitles", release_name=f"Release {i}"))
@@ -111,7 +111,7 @@ class AggregatorTests(unittest.TestCase):
         self.mock_sd.search_subtitles.return_value = []
         
         results = self.aggregator.search_subtitles(query="test")
-        self.assertEqual(len(results), 10)
+        self.assertEqual(len(results), 12)
 
     def test_download_routes_to_correct_provider(self):
         # We need to run a search first to populate the cache
