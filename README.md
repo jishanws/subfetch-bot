@@ -96,6 +96,15 @@ PROXY_URL=socks5://user:pass@127.0.0.1:1080
 PROXY_URL=http://127.0.0.1:8080
 ```
 
+## Deployment
+
+When deploying on platforms like Render:
+
+- **Start Command**: `python3 main.py`
+- **Health URL**: `/health`
+
+The bot automatically starts a background HTTP health server bound to `0.0.0.0:$PORT` to keep the deployment active and prevent timeout errors.
+
 ## Running Locally
 
 Start the bot in polling mode:

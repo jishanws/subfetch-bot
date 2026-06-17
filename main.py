@@ -15,6 +15,7 @@ from telegram.ext import Application, ApplicationBuilder
 from telegram.request import HTTPXRequest
 
 from bot.handlers import register_handlers
+from bot.health_server import start_health_server
 from config import get_settings
 
 logging.basicConfig(
@@ -101,6 +102,8 @@ def main() -> None:
             logger.info("No PROXY_URL configured. Telegram will connect directly.")
         logger.info("Attempting to connect to Telegram API...")
         logger.info("Starting subfetch-bot in polling mode.")
+
+        start_health_server()
 
         try:
             application.run_polling()
