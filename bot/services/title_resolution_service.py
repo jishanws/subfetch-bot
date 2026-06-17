@@ -64,10 +64,11 @@ class TitleResolutionService:
     def resolve_user_query(self, raw_text: str) -> TitleResolution:
         """Resolve a user query through TMDb, retrying once with Groq if needed."""
         season, episode = self._extract_episode(raw_text)
+        year = self._extract_year(raw_text)
         tmdb_query = self._build_tmdb_query(raw_text)
 
         try:
-            result = self._best_tmdb_result(tmdb_query)
+            result = self._best_tmdb_result(tmdb_query, year)
         except TmdbNoResultsError:
             corrected_query = self._correct_with_groq(tmdb_query)
             if corrected_query is None or corrected_query.lower() == tmdb_query.lower():
@@ -78,17 +79,31 @@ class TitleResolutionService:
                 tmdb_query,
                 corrected_query,
             )
-            result = self._best_tmdb_result(corrected_query)
+            result = self._best_tmdb_result(corrected_query, year)
 
         return self._build_resolution(result, season, episode)
 
-    def _best_tmdb_result(self, query: str) -> SearchResult:
+    def _best_tmdb_result(self, query: str, year: int | None) -> SearchResult:
         results = self._tmdb_service.multi_search(query)
         normalized_query = self._normalize_title(query)
-        for result in results:
-            if self._normalize_title(result.title) == normalized_query:
-                return result
-        return results[0]
+        
+        # Ranking function
+        def score(res: SearchResult) -> int:
+            s = 0
+            if year and res.release_year == year:
+                s += 100
+                if res.media_type == "movie":
+                    s += 50
+            if self._normalize_title(res.title) == normalized_query:
+                s += 10
+            elif normalized_query in self._normalize_title(res.title):
+                s += 5
+            # Prefer movies slightly if year is present and exact year matched
+            return s
+            
+        # Sort by score descending
+        ranked = sorted(results, key=score, reverse=True)
+        return ranked[0]
 
     def _correct_with_groq(self, query: str) -> str | None:
         if self._groq_service is None:
@@ -114,6 +129,7 @@ class TitleResolutionService:
         season: int | None,
         episode: int | None,
     ) -> TitleResolution:
+        # Never enter episode-selection flow unless resolved_media_type == "tv"
         needs_episode = result.media_type == "tv" and (season is None or episode is None)
         normalized_query = self._build_subtitle_query(result, season, episode)
 
@@ -145,7 +161,25 @@ class TitleResolutionService:
         query = self.COMPACT_EPISODE_PATTERN.sub(" ", query)
         query = self.SEASON_EPISODE_PATTERN.sub(" ", query)
         query = self.EPISODE_OF_SEASON_PATTERN.sub(" ", query)
-        query = re.sub(r"[?:!,]+", " ", query)
+        
+        # Strip bracketed release metadata e.g., [1080p], [BluRay]
+        query = re.sub(r"\[.*?\]", " ", query)
+        
+        # Strip years in parens e.g., (1983)
+        query = re.sub(r"\(\s*(19|20)\d{2}\s*\)", " ", query)
+        
+        # Strip common release tags that might not be bracketed
+        release_tags = [
+            r"1080p", r"720p", r"4k", r"2160p", r"bluray", r"web-dl", r"webrip", 
+            r"hdrip", r"brrip", r"bdrip", r"x264", r"x265", r"hevc", r"yts", r"yify"
+        ]
+        tag_pattern = r"\b(?:" + "|".join(release_tags) + r")\b"
+        query = re.sub(tag_pattern, " ", query, flags=re.IGNORECASE)
+        
+        # Strip standalone years
+        query = re.sub(r"\b(19|20)\d{2}\b", " ", query)
+        
+        query = re.sub(r"[?:!,\.\-\_]+", " ", query)
         query = re.sub(r"\s+", " ", query).strip()
         return self._alias_service.resolve(query)
 
@@ -160,6 +194,13 @@ class TitleResolutionService:
                 return int(match.group("season")), int(match.group("episode"))
 
         return None, None
+        
+    def _extract_year(self, raw_text: str) -> int | None:
+        # Match (1983), [1983] or 1983
+        matches = re.findall(r"(?:\b|\[|\()((?:19|20)\d{2})(?:\b|\]|\))", raw_text)
+        if matches:
+            return int(matches[-1]) # take the last one in case there are multiple numbers
+        return None
 
     def _normalize_title(self, title: str) -> str:
         normalized = re.sub(r"[^a-z0-9]+", " ", title.lower())

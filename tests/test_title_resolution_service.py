@@ -184,6 +184,62 @@ class TitleResolutionServiceTests(unittest.TestCase):
 
         self.assertEqual(resolution.title, "House of the Dragon")
 
+    def test_largent_1983_metadata_stripped_resolves_to_movie(self) -> None:
+        service = TitleResolutionService(
+            tmdb_service=FakeTmdbService(
+                {"l'argent": [self.movie_result("L'Argent", 1983)]}
+            ),
+            groq_service=FakeGroqService(None),
+        )
+
+        resolution = service.resolve_user_query("L'Argent (1983) [1080p] [BluRay] [YTS.MX]")
+
+        self.assertEqual(resolution.title, "L'Argent")
+        self.assertEqual(resolution.year, 1983)
+        self.assertEqual(resolution.media_type, "movie")
+        self.assertFalse(resolution.needs_episode)
+
+    def test_oppenheimer_2023_resolves_to_movie(self) -> None:
+        service = TitleResolutionService(
+            tmdb_service=FakeTmdbService(
+                {"oppenheimer": [self.movie_result("Oppenheimer", 2023)]}
+            ),
+            groq_service=FakeGroqService(None),
+        )
+
+        resolution = service.resolve_user_query("Oppenheimer 2023")
+
+        self.assertEqual(resolution.title, "Oppenheimer")
+        self.assertEqual(resolution.year, 2023)
+        self.assertEqual(resolution.media_type, "movie")
+        self.assertFalse(resolution.needs_episode)
+
+    def test_dark_resolves_to_tv(self) -> None:
+        service = TitleResolutionService(
+            tmdb_service=FakeTmdbService({"dark": [self.tv_result("Dark", 2017)]}),
+            groq_service=FakeGroqService(None),
+        )
+
+        resolution = service.resolve_user_query("Dark")
+
+        self.assertEqual(resolution.title, "Dark")
+        self.assertEqual(resolution.media_type, "tv")
+        self.assertTrue(resolution.needs_episode)
+
+    def test_shawshank_redemption_resolves_to_movie(self) -> None:
+        service = TitleResolutionService(
+            tmdb_service=FakeTmdbService(
+                {"the shawshank redemption": [self.movie_result("The Shawshank Redemption", 1994)]}
+            ),
+            groq_service=FakeGroqService(None),
+        )
+
+        resolution = service.resolve_user_query("The Shawshank Redemption")
+
+        self.assertEqual(resolution.title, "The Shawshank Redemption")
+        self.assertEqual(resolution.media_type, "movie")
+        self.assertFalse(resolution.needs_episode)
+
     def movie_result(self, title: str, year: int) -> SearchResult:
         return SearchResult(
             tmdb_id=1,
