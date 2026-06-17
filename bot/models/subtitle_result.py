@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class SubtitleResult(BaseModel):
-    """Normalized subtitle metadata returned by OpenSubtitles."""
+    """Normalized subtitle metadata returned by OpenSubtitles or SubDL."""
 
     subtitle_id: str = Field(min_length=1)
     file_id: str = Field(min_length=1)
@@ -15,6 +15,9 @@ class SubtitleResult(BaseModel):
     download_count: int = Field(ge=0)
     hearing_impaired: bool = False
     release_name: str = ""
+    source: str = "opensubtitles"
+    provider_subtitle_id: str = ""
+    download_url: str | None = None
 
     @property
     def language_label(self) -> str:

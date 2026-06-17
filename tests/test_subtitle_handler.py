@@ -88,7 +88,7 @@ class SubtitleHandlerTests(unittest.TestCase):
         keyboard = build_subtitle_keyboard([result])
         button = keyboard.inline_keyboard[0][0]
 
-        self.assertEqual(button.text, "BluRay\nEnglish | BluRay | 12k")
+        self.assertEqual(button.text, "BluRay\nEnglish | BluRay | 12k | OS")
         self.assertEqual(button.callback_data, "download_subtitle:101")
 
     def test_build_subtitle_button_label_formatting(self) -> None:
@@ -107,7 +107,7 @@ class SubtitleHandlerTests(unittest.TestCase):
         label = build_subtitle_button_label(result)
         self.assertEqual(
             label,
-            "Game.Of.Thrones.S05E07.The....BDRip\nEnglish | 1080p BluRay | 39k",
+            "Game.Of.Thrones.S05E07...BDRip\nEnglish | 1080p BluRay | 39k | OS",
         )
 
         # Fallback to file name, removes extension
@@ -123,7 +123,7 @@ class SubtitleHandlerTests(unittest.TestCase):
         label2 = build_subtitle_button_label(result2)
         self.assertEqual(
             label2,
-            "Dark.S01E03.1080p.WEB-DL\nEnglish | 1080p WEB-DL | 1.2k",
+            "Dark.S01E03.1080p.WEB-DL\nEnglish | 1080p WEB-DL | 1.2k | OS",
         )
 
         # Truncates middle safely if very long
@@ -138,7 +138,7 @@ class SubtitleHandlerTests(unittest.TestCase):
         )
         label3 = build_subtitle_button_label(result3)
         self.assertLessEqual(len(label3), 64)
-        self.assertTrue(label3.startswith("Some.Very.Long.Release.N"))
+        self.assertTrue(label3.startswith("Some.Very.Long.R"))
         self.assertTrue("...EB-DL\nEnglish" in label3)
 
         # Fallback for completely missing release
@@ -154,7 +154,7 @@ class SubtitleHandlerTests(unittest.TestCase):
         label4 = build_subtitle_button_label(result4)
         self.assertEqual(
             label4,
-            "Unknown release\nEnglish | Unknown | 10",
+            "Unknown release\nEnglish | Unknown | 10 | OS",
         )
 
     def test_build_episode_keyboard(self) -> None:

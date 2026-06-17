@@ -14,6 +14,7 @@ class Settings(BaseModel):
     tmdb_api_key: SecretStr = Field(min_length=1)
     opensubtitles_api_key: SecretStr = Field(min_length=1)
     groq_api_key: SecretStr = Field(min_length=1)
+    subdl_api_key: SecretStr | None = None
     proxy_url: SecretStr | None = None
 
 
@@ -28,11 +29,13 @@ def get_settings() -> Settings:
 
     try:
         proxy_val = os.getenv("PROXY_URL", "").strip()
+        subdl_val = os.getenv("SUBDL_API_KEY", "").strip()
         return Settings(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             tmdb_api_key=os.getenv("TMDB_API_KEY", ""),
             opensubtitles_api_key=os.getenv("OPENSUBTITLES_API_KEY", ""),
             groq_api_key=os.getenv("GROQ_API_KEY", ""),
+            subdl_api_key=subdl_val if subdl_val else None,
             proxy_url=proxy_val if proxy_val else None,
         )
     except ValidationError as exc:

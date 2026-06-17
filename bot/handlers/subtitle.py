@@ -111,14 +111,35 @@ async def run_subtitle_query(message: Message, query: str) -> None:
             )
             return
 
-        subtitles_service = OpenSubtitlesService(
-            settings.opensubtitles_api_key.get_secret_value()
-        )
+        from bot.services.subtitle_providers.opensubtitles_provider import OpenSubtitlesProvider
+        from bot.services.subtitle_providers.subdl_provider import SubdlProvider
+        from bot.services.subtitle_aggregator_service import SubtitleAggregatorService
+        from bot.services.opensubtitles_service import OpenSubtitlesService
+        
+        providers = [
+            OpenSubtitlesProvider(OpenSubtitlesService(settings.opensubtitles_api_key.get_secret_value()))
+        ]
+        subdl_key = settings.subdl_api_key.get_secret_value() if settings.subdl_api_key else None
+        if subdl_key:
+            providers.append(SubdlProvider(subdl_key))
+            
+        aggregator = SubtitleAggregatorService(providers)
         subtitle_query = title_resolution.normalized_query
-        subtitles = select_subtitle_results(
-            subtitles_service.search_subtitles(subtitle_query),
-            subtitle_query,
+        
+        subtitles = aggregator.search_subtitles(
+            query=subtitle_query,
+            tmdb_id=title_resolution.tmdb_id,
+            media_type=title_resolution.media_type,
+            season=title_resolution.season,
+            episode=title_resolution.episode,
         )
+        
+        if not subtitles:
+            await message.reply_text(
+                "I couldn’t find subtitles from available sources. Try adding the year, season/episode, or release type."
+            )
+            return
+
     except ConfigError:
         logger.exception("Subtitle command failed because configuration is invalid.")
         await message.reply_text(
@@ -139,17 +160,8 @@ async def run_subtitle_query(message: Message, query: str) -> None:
     except InvalidSubtitleQueryError:
         await message.reply_text("Please provide a valid subtitle search query.")
         return
-    except OpenSubtitlesAuthenticationError:
-        await message.reply_text("OpenSubtitles rejected the configured API key.")
-        return
-    except OpenSubtitlesNoResultsError:
-        await message.reply_text("No subtitles found.")
-        return
-    except OpenSubtitlesDowntimeError:
-        await message.reply_text("OpenSubtitles is unavailable. Please try again later.")
-        return
-    except OpenSubtitlesServiceError:
-        logger.exception("OpenSubtitles search failed.")
+    except Exception:
+        logger.exception("Subtitle search failed.")
         await message.reply_text("Subtitle search failed. Please try again later.")
         return
 
@@ -194,32 +206,27 @@ async def subtitle_download_callback(
 
     try:
         settings = get_settings()
-        subtitles_service = OpenSubtitlesService(
-            settings.opensubtitles_api_key.get_secret_value()
-        )
-        download = subtitles_service.download_subtitle(file_id)
+        from bot.services.subtitle_providers.opensubtitles_provider import OpenSubtitlesProvider
+        from bot.services.subtitle_providers.subdl_provider import SubdlProvider
+        from bot.services.subtitle_aggregator_service import SubtitleAggregatorService
+        from bot.services.opensubtitles_service import OpenSubtitlesService
+        
+        providers = [
+            OpenSubtitlesProvider(OpenSubtitlesService(settings.opensubtitles_api_key.get_secret_value()))
+        ]
+        subdl_key = settings.subdl_api_key.get_secret_value() if settings.subdl_api_key else None
+        if subdl_key:
+            providers.append(SubdlProvider(subdl_key))
+            
+        aggregator = SubtitleAggregatorService(providers)
+        download = aggregator.download_subtitle(file_id)
         temp_path = write_temp_subtitle_file(download.file_name, download.content)
     except ConfigError:
         logger.exception("Subtitle download failed because configuration is invalid.")
         await query.answer("Subtitle downloads are not configured.", show_alert=True)
         return
-    except OpenSubtitlesAuthenticationError:
-        await query.answer("OpenSubtitles rejected the configured API key.", show_alert=True)
-        return
-    except OpenSubtitlesDownloadLinkExpiredError:
-        await query.answer("Download link expired. Run /subtitle again.", show_alert=True)
-        return
-    except OpenSubtitlesFileUnavailableError:
-        await query.answer("Subtitle file is unavailable.", show_alert=True)
-        return
-    except OpenSubtitlesRateLimitError:
-        await query.answer("OpenSubtitles rate limit reached. Try again later.", show_alert=True)
-        return
-    except OpenSubtitlesDowntimeError:
-        await query.answer("OpenSubtitles is unavailable. Try again later.", show_alert=True)
-        return
-    except OpenSubtitlesServiceError:
-        logger.exception("OpenSubtitles download failed.")
+    except Exception:
+        logger.exception("Subtitle download failed.")
         await query.answer("Subtitle download failed. Try again later.", show_alert=True)
         return
 
@@ -446,7 +453,11 @@ def build_subtitle_button_label(result: SubtitleResult) -> str:
     quality = " ".join(part for part in (resolution, source) if part != "Unknown")
     
     downloads = format_download_count(result.download_count).replace(" downloads", "")
-    bottom_line = f"{result.language_label} | {quality or 'Unknown'} | {downloads}"
+    
+    provider_labels = {"opensubtitles": "OS", "subdl": "SD"}
+    provider_label = provider_labels.get(result.source, result.source)
+    
+    bottom_line = f"{result.language_label} | {quality or 'Unknown'} | {downloads} | {provider_label}"
     
     max_release_length = 64 - 1 - len(bottom_line)
     
