@@ -74,6 +74,26 @@ TELEGRAM_BOT_TOKEN=
 TMDB_API_KEY=
 OPENSUBTITLES_API_KEY=
 GROQ_API_KEY=
+PROXY_URL=
+```
+
+## Running without VPN
+
+If Telegram is blocked in your region, running without VPN requires a working local proxy. The bot supports both HTTP and SOCKS5 proxies.
+
+1. Ensure you have installed the requirements, which includes SOCKS5 support (`httpx[socks]`).
+2. Add the `PROXY_URL` to your `.env` file. The bot will automatically route Telegram requests through it.
+
+Example `.env` proxy configurations:
+```env
+# SOCKS5 proxy
+PROXY_URL=socks5://127.0.0.1:1080
+
+# SOCKS5 with authentication
+PROXY_URL=socks5://user:pass@127.0.0.1:1080
+
+# HTTP proxy
+PROXY_URL=http://127.0.0.1:8080
 ```
 
 ## Running Locally

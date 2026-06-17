@@ -14,6 +14,7 @@ class Settings(BaseModel):
     tmdb_api_key: SecretStr = Field(min_length=1)
     opensubtitles_api_key: SecretStr = Field(min_length=1)
     groq_api_key: SecretStr = Field(min_length=1)
+    proxy_url: SecretStr | None = None
 
 
 class ConfigError(RuntimeError):
@@ -26,11 +27,13 @@ def get_settings() -> Settings:
     load_dotenv()
 
     try:
+        proxy_val = os.getenv("PROXY_URL", "").strip()
         return Settings(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             tmdb_api_key=os.getenv("TMDB_API_KEY", ""),
             opensubtitles_api_key=os.getenv("OPENSUBTITLES_API_KEY", ""),
             groq_api_key=os.getenv("GROQ_API_KEY", ""),
+            proxy_url=proxy_val if proxy_val else None,
         )
     except ValidationError as exc:
         field_names = {
