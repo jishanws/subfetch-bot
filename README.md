@@ -169,6 +169,3 @@ Contributions are welcome! Since this is a small project, feel free to directly:
 
 
 [back-to-top]: https://img.shields.io/badge/-BACK_TO_TOP-151515?style=flat-square
-
-
----
