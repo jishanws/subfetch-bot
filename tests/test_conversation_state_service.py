@@ -60,10 +60,12 @@ class ConversationStateServiceTests(unittest.TestCase):
         examples = {
             "s05e05": (5, 5),
             "s05 e05": (5, 5),
+            "s01 e01": (1, 1),
             "s5e5": (5, 5),
             "s5 e5": (5, 5),
             "season 5 episode 5": (5, 5),
             "season 5 ep 5": (5, 5),
+            "ep 5 season 5": (5, 5),
             "episode 5 of season 5": (5, 5),
         }
 
@@ -71,13 +73,27 @@ class ConversationStateServiceTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(self.service.parse_episode(message), expected)
 
+    def test_pending_episode_state_keeps_required_metadata(self) -> None:
+        request = self.pending_request()
+
+        self.service.store_pending_episode_request(1001, request)
+        stored = self.service.get_pending_episode_request(1001)
+
+        self.assertEqual(stored.user_id, 1001)
+        self.assertEqual(stored.tmdb_id, 1399)
+        self.assertEqual(stored.title, "Game of Thrones")
+        self.assertEqual(stored.media_type, "tv")
+        self.assertIsNotNone(stored.created_at)
+
     def pending_request(
         self,
         created_at: datetime | None = None,
     ) -> PendingEpisodeRequest:
         return PendingEpisodeRequest(
+            user_id=1001,
             tmdb_id=1399,
             title="Game of Thrones",
+            media_type="tv",
             original_query="GOT",
             normalized_title="Game of Thrones",
             year=2011,

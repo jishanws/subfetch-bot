@@ -111,6 +111,34 @@ class TitleResolutionServiceTests(unittest.TestCase):
         self.assertEqual(groq_service.calls, [])
         self.assertEqual(resolution.normalized_query, "Interstellar 2014")
 
+    def test_intersteller_uses_groq_correction_after_tmdb_miss(self) -> None:
+        groq_service = FakeGroqService("interstellar")
+        service = TitleResolutionService(
+            tmdb_service=FakeTmdbService(
+                {"interstellar": [self.movie_result("Interstellar", 2014)]}
+            ),
+            groq_service=groq_service,
+        )
+
+        resolution = service.resolve_user_query("intersteller")
+
+        self.assertEqual(groq_service.calls, ["intersteller"])
+        self.assertEqual(resolution.title, "Interstellar")
+
+    def test_oppenhiemer_uses_groq_correction_after_tmdb_miss(self) -> None:
+        groq_service = FakeGroqService("oppenheimer")
+        service = TitleResolutionService(
+            tmdb_service=FakeTmdbService(
+                {"oppenheimer": [self.movie_result("Oppenheimer", 2023)]}
+            ),
+            groq_service=groq_service,
+        )
+
+        resolution = service.resolve_user_query("oppenhiemer")
+
+        self.assertEqual(groq_service.calls, ["oppenhiemer"])
+        self.assertEqual(resolution.normalized_query, "Oppenheimer 2023")
+
     def test_got_alias_resolves_to_game_of_thrones(self) -> None:
         service = TitleResolutionService(
             tmdb_service=FakeTmdbService(
@@ -129,18 +157,32 @@ class TitleResolutionServiceTests(unittest.TestCase):
         self.assertEqual(resolution.title, "Game of Thrones")
         self.assertTrue(resolution.needs_episode)
 
-    def test_game_of_throne_alias_resolves_to_game_of_thrones(self) -> None:
+    def test_game_of_throne_uses_groq_correction_after_tmdb_miss(self) -> None:
+        groq_service = FakeGroqService("game of thrones")
         service = TitleResolutionService(
             tmdb_service=FakeTmdbService(
                 {"game of thrones": [self.tv_result("Game of Thrones", 2011)]}
             ),
-            groq_service=FakeGroqService(None),
+            groq_service=groq_service,
         )
 
         resolution = service.resolve_user_query("game of throne")
 
+        self.assertEqual(groq_service.calls, ["game of throne"])
         self.assertEqual(resolution.title, "Game of Thrones")
         self.assertTrue(resolution.needs_episode)
+
+    def test_hotd_alias_resolves_before_tmdb(self) -> None:
+        service = TitleResolutionService(
+            tmdb_service=FakeTmdbService(
+                {"house of the dragon": [self.tv_result("House of the Dragon", 2022)]}
+            ),
+            groq_service=FakeGroqService(None),
+        )
+
+        resolution = service.resolve_user_query("HOTD")
+
+        self.assertEqual(resolution.title, "House of the Dragon")
 
     def movie_result(self, title: str, year: int) -> SearchResult:
         return SearchResult(

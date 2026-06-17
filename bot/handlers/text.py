@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+import re
 
 from telegram import Message
 from telegram.error import TelegramError
@@ -27,6 +28,9 @@ SELECTION_MODE_MESSAGE = (
     "Selection mode is coming soon. For now, search subtitles directly, "
     "e.g. interstellar subtitle"
 )
+GREETING_MESSAGES = {"hi", "hello", "hey"}
+ACKNOWLEDGEMENT_MESSAGES = {"thanks", "thank you", "thx", "ty"}
+SYNC_AMOUNT_PROMPT = "How much?\nExamples:\n1s\n2s\n5s"
 
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -43,6 +47,9 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     if await handle_pending_episode_reply(update, message):
+        return
+
+    if await handle_human_conversation_reply(update, message):
         return
 
     if message == "1":
@@ -69,6 +76,32 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         "I did not understand that yet. Try a title like interstellar subtitle, "
         "or send help."
     )
+
+
+async def handle_human_conversation_reply(update: Update, message: str) -> bool:
+    """Handle simple conversational messages without triggering title search."""
+    if update.message is None:
+        return False
+
+    normalized = normalize_conversation_message(message)
+    if normalized in GREETING_MESSAGES:
+        await update.message.reply_text(
+            "Hi! Send a movie or TV show title to find subtitles."
+        )
+        return True
+    if normalized in ACKNOWLEDGEMENT_MESSAGES:
+        await update.message.reply_text("You’re welcome 🎬")
+        return True
+    return False
+
+
+def normalize_conversation_message(message: str) -> str:
+    """Normalize short conversational text for exact phrase matching."""
+    lowered = message.lower()
+    lowered = lowered.replace("'", "")
+    lowered = lowered.replace("’", "")
+    lowered = re.sub(r"[^a-z0-9]+", " ", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
 
 
 async def handle_pending_sync_reply(update: Update, message: str) -> bool:
@@ -100,7 +133,7 @@ async def handle_pending_sync_reply(update: Update, message: str) -> bool:
 
     if sync_result.intent is SyncIntent.NEED_AMOUNT:
         if pending_request.direction is None:
-            await update.message.reply_text("About how much? Try: 1s, 2s, 5s")
+            await update.message.reply_text(SYNC_AMOUNT_PROMPT)
             return True
         await apply_subtitle_sync(
             update.message,
@@ -114,7 +147,7 @@ async def handle_pending_sync_reply(update: Update, message: str) -> bool:
     if sync_result.intent is SyncIntent.TOO_EARLY:
         if sync_result.amount_seconds is None:
             state_service.set_pending_sync_direction(user_id, "early")
-            await update.message.reply_text("About how much? Try: 1s, 2s, 5s")
+            await update.message.reply_text(SYNC_AMOUNT_PROMPT)
             return True
         await apply_subtitle_sync(
             update.message,
@@ -128,7 +161,7 @@ async def handle_pending_sync_reply(update: Update, message: str) -> bool:
     if sync_result.intent is SyncIntent.TOO_LATE:
         if sync_result.amount_seconds is None:
             state_service.set_pending_sync_direction(user_id, "late")
-            await update.message.reply_text("About how much? Try: 1s, 2s, 5s")
+            await update.message.reply_text(SYNC_AMOUNT_PROMPT)
             return True
         await apply_subtitle_sync(
             update.message,
@@ -154,7 +187,7 @@ async def apply_subtitle_sync(
 ) -> None:
     """Apply a sync shift and send the corrected subtitle file."""
     if amount_seconds is None:
-        await message.reply_text("About how much? Try: 1s, 2s, 5s")
+        await message.reply_text(SYNC_AMOUNT_PROMPT)
         return
 
     shift_seconds = amount_seconds if direction == "early" else -amount_seconds

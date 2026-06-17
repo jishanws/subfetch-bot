@@ -16,6 +16,8 @@ from bot.handlers.search import search_command
 from bot.handlers.start import start_command
 from bot.handlers.subtitle import (
     DOWNLOAD_CALLBACK_PREFIX,
+    EPISODE_CALLBACK_PREFIX,
+    SYNC_CALLBACK_PREFIX,
     subtitle_command,
     subtitle_download_callback,
 )
@@ -33,7 +35,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(
         CallbackQueryHandler(
             subtitle_download_callback,
-            pattern=f"^{DOWNLOAD_CALLBACK_PREFIX}:",
+            pattern=f"^(?:{DOWNLOAD_CALLBACK_PREFIX}|{EPISODE_CALLBACK_PREFIX}|{SYNC_CALLBACK_PREFIX}):",
         )
     )
     application.add_handler(

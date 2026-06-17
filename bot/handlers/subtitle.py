@@ -49,16 +49,13 @@ SEASON_EPISODE_PATTERN = re.compile(
 )
 MAX_SUBTITLE_RESULTS = 10
 DOWNLOAD_CALLBACK_PREFIX = "download_subtitle"
+EPISODE_CALLBACK_PREFIX = "episode"
+SYNC_CALLBACK_PREFIX = "sync"
 DOWNLOAD_COOLDOWN_SECONDS = 15.0
 SYNC_STORAGE_ROOT = Path("tmp/sync")
 SYNC_PROMPT = (
-    "Is the subtitle timing okay?\n\n"
-    "Reply with something like:\n\n"
-    "* perfect\n"
-    "* too fast\n"
-    "* too slow\n"
-    "* subtitles appear 2 seconds early\n"
-    "* subtitles appear 3 seconds late"
+    "Is the subtitle synchronized?\n\n"
+    "You can also reply: perfect, too fast, too slow, 2s early, or 3s late."
 )
 _last_download_by_user: dict[int, float] = {}
 
@@ -95,6 +92,8 @@ async def run_subtitle_query(message: Message, query: str) -> None:
                     PendingEpisodeRequest(
                         tmdb_id=title_resolution.tmdb_id,
                         title=title_resolution.title,
+                        user_id=message.from_user.id,
+                        media_type=title_resolution.media_type,
                         original_query=query,
                         normalized_title=title_resolution.title,
                         year=title_resolution.year,
@@ -110,7 +109,8 @@ async def run_subtitle_query(message: Message, query: str) -> None:
 
             await message.reply_text(
                 "Which episode do you need?\n\n"
-                f"Example:\n{title_resolution.title} S01E01"
+                f"Example: {title_resolution.title} S01E01",
+                reply_markup=build_episode_keyboard(),
             )
             return
 
@@ -166,14 +166,20 @@ async def subtitle_download_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Download a selected subtitle and send it to the user."""
+    """Handle subtitle, episode, and sync inline button callbacks."""
     del context
 
     query = update.callback_query
     if query is None:
         return
 
-    file_id = parse_download_callback_data(query.data or "")
+    callback_data = query.data or ""
+    if await handle_episode_callback(update, callback_data):
+        return
+    if await handle_sync_callback(update, callback_data):
+        return
+
+    file_id = parse_download_callback_data(callback_data)
     if file_id is None:
         await query.answer("Invalid subtitle selection.", show_alert=True)
         return
@@ -236,13 +242,80 @@ async def subtitle_download_callback(
             download.file_name,
         )
         if retained_path is not None:
-            await query.message.reply_text(SYNC_PROMPT)
+            await query.message.reply_text(
+                SYNC_PROMPT,
+                reply_markup=build_sync_keyboard(),
+            )
         await query.answer("Subtitle sent.")
     except TelegramError:
         logger.exception("Telegram failed to upload subtitle file.")
         await query.answer("Telegram upload failed. Please try again.", show_alert=True)
     finally:
         cleanup_temp_file(temp_path)
+
+
+async def handle_episode_callback(update: Update, callback_data: str) -> bool:
+    """Handle episode clarification inline buttons."""
+    query = update.callback_query
+    if query is None or not callback_data.startswith(f"{EPISODE_CALLBACK_PREFIX}:"):
+        return False
+
+    action = callback_data.removeprefix(f"{EPISODE_CALLBACK_PREFIX}:")
+    if action == "cancel":
+        ConversationStateService().clear_pending_episode_request(query.from_user.id)
+        await query.answer("Cancelled.")
+        if query.message is not None:
+            await query.message.reply_text("Cancelled. Send a title when you're ready.")
+        return True
+
+    if action == "enter":
+        await query.answer("Send an episode like S01E01.")
+        if query.message is not None:
+            await query.message.reply_text("Send the episode number, like S01E01.")
+        return True
+
+    await query.answer("Invalid episode action.", show_alert=True)
+    return True
+
+
+async def handle_sync_callback(update: Update, callback_data: str) -> bool:
+    """Handle subtitle sync inline buttons."""
+    query = update.callback_query
+    if query is None or not callback_data.startswith(f"{SYNC_CALLBACK_PREFIX}:"):
+        return False
+
+    state_service = ConversationStateService()
+    pending_request = state_service.get_pending_sync_request(query.from_user.id)
+    if pending_request is None:
+        await query.answer("No active subtitle sync session.", show_alert=True)
+        return True
+    if state_service.is_pending_sync_expired(pending_request):
+        state_service.clear_pending_sync_request(query.from_user.id)
+        await query.answer("Sync session expired.", show_alert=True)
+        return True
+
+    action = callback_data.removeprefix(f"{SYNC_CALLBACK_PREFIX}:")
+    if action == "perfect":
+        state_service.clear_pending_sync_request(query.from_user.id)
+        await query.answer("Marked perfect.")
+        if query.message is not None:
+            await query.message.reply_text("Great. Enjoy the movie 🎬")
+        return True
+    if action == "early":
+        state_service.set_pending_sync_direction(query.from_user.id, "early")
+        await query.answer("How much?")
+        if query.message is not None:
+            await query.message.reply_text("How much?\nExamples:\n1s\n2s\n5s")
+        return True
+    if action == "late":
+        state_service.set_pending_sync_direction(query.from_user.id, "late")
+        await query.answer("How much?")
+        if query.message is not None:
+            await query.message.reply_text("How much?\nExamples:\n1s\n2s\n5s")
+        return True
+
+    await query.answer("Invalid sync action.", show_alert=True)
+    return True
 
 
 def build_tmdb_identification_query(query: str) -> str:
@@ -280,6 +353,31 @@ def build_subtitle_keyboard(results: list[SubtitleResult]) -> InlineKeyboardMark
         for result in results
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def build_episode_keyboard() -> InlineKeyboardMarkup:
+    """Build inline buttons for a TV episode clarification prompt."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(text="Enter Episode", callback_data="episode:enter"),
+                InlineKeyboardButton(text="Cancel", callback_data="episode:cancel"),
+            ]
+        ]
+    )
+
+
+def build_sync_keyboard() -> InlineKeyboardMarkup:
+    """Build inline buttons for subtitle sync feedback."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(text="Perfect", callback_data="sync:perfect"),
+                InlineKeyboardButton(text="Too Early", callback_data="sync:early"),
+                InlineKeyboardButton(text="Too Late", callback_data="sync:late"),
+            ]
+        ]
+    )
 
 
 def build_subtitle_button_label(result: SubtitleResult) -> str:

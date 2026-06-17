@@ -80,8 +80,8 @@ class SubtitleRankingService:
     def _score(self, result: SubtitleResult, query: QueryFeatures) -> tuple[float, ...]:
         result_text = self._normalized_result_text(result)
         title_score = self._title_score(query.title, result_text)
-        year_score = self._year_score(query.year, result_text)
         episode_score = self._episode_score(query, result_text)
+        year_score = self._year_score(query.year, result_text)
         language_score = 1.0 if result.language.lower() in {"en", "eng"} else 0.0
         noise_score = -1.0 if is_noisy_result(result) else 0.0
         resolution = detect_resolution(result.release_name or result.file_name)
@@ -89,8 +89,8 @@ class SubtitleRankingService:
 
         return (
             title_score,
-            year_score,
             episode_score,
+            year_score,
             language_score,
             noise_score,
             RESOLUTION_PRIORITY[resolution],

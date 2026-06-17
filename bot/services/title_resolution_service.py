@@ -6,6 +6,7 @@ import re
 from typing import Literal
 
 from bot.models.search_result import SearchResult
+from bot.services.alias_service import AliasService
 from bot.services.groq_service import GroqService, GroqServiceError
 from bot.services.tmdb_service import TmdbNoResultsError, TmdbService
 
@@ -31,12 +32,6 @@ class TitleResolution:
 class TitleResolutionService:
     """Resolve raw user text into title metadata for subtitle search."""
 
-    TITLE_ALIASES = {
-        "got": "game of thrones",
-        "game of throne": "game of thrones",
-        "bb": "breaking bad",
-        "lotr": "lord of the rings",
-    }
     COMPACT_EPISODE_PATTERN = re.compile(
         r"\bs0*(?P<season>\d{1,2})\s*e0*(?P<episode>\d{1,3})\b",
         flags=re.IGNORECASE,
@@ -60,9 +55,11 @@ class TitleResolutionService:
         self,
         tmdb_service: TmdbService,
         groq_service: GroqService | None = None,
+        alias_service: AliasService | None = None,
     ) -> None:
         self._tmdb_service = tmdb_service
         self._groq_service = groq_service
+        self._alias_service = alias_service or AliasService()
 
     def resolve_user_query(self, raw_text: str) -> TitleResolution:
         """Resolve a user query through TMDb, retrying once with Groq if needed."""
@@ -150,7 +147,7 @@ class TitleResolutionService:
         query = self.EPISODE_OF_SEASON_PATTERN.sub(" ", query)
         query = re.sub(r"[?:!,]+", " ", query)
         query = re.sub(r"\s+", " ", query).strip()
-        return self.TITLE_ALIASES.get(self._normalize_title(query), query)
+        return self._alias_service.resolve(query)
 
     def _extract_episode(self, raw_text: str) -> tuple[int | None, int | None]:
         for pattern in (

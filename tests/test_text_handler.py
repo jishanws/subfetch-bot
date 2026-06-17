@@ -112,10 +112,50 @@ class TextHandlerPendingEpisodeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNone(self.state_service.get_pending_sync_request(1001))
 
+    async def test_too_fast_asks_for_amount_and_stores_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = self.write_pending_sync_file(temp_dir)
+            self.state_service.store_pending_sync_request(
+                1001,
+                self.pending_sync_request(file_path),
+            )
+            update = build_update(user_id=1001, text="too fast")
+
+            await handle_text_message(update, None)
+
+        update.message.reply_text.assert_awaited_once_with(
+            "How much?\nExamples:\n1s\n2s\n5s"
+        )
+        pending = self.state_service.get_pending_sync_request(1001)
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.direction, "early")
+
+    async def test_greeting_does_not_search(self) -> None:
+        update = build_update(user_id=1001, text="hello")
+
+        with patch("bot.handlers.text.run_subtitle_query", new=AsyncMock()) as run_query:
+            await handle_text_message(update, None)
+
+        update.message.reply_text.assert_awaited_once_with(
+            "Hi! Send a movie or TV show title to find subtitles."
+        )
+        run_query.assert_not_awaited()
+
+    async def test_thanks_does_not_search(self) -> None:
+        update = build_update(user_id=1001, text="thanks")
+
+        with patch("bot.handlers.text.run_subtitle_query", new=AsyncMock()) as run_query:
+            await handle_text_message(update, None)
+
+        update.message.reply_text.assert_awaited_once_with("You’re welcome 🎬")
+        run_query.assert_not_awaited()
+
     def pending_request(self) -> PendingEpisodeRequest:
         return PendingEpisodeRequest(
+            user_id=1001,
             tmdb_id=1399,
             title="Game of Thrones",
+            media_type="tv",
             original_query="GOT",
             normalized_title="Game of Thrones",
             year=2011,

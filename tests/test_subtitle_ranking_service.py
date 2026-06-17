@@ -47,6 +47,26 @@ class SubtitleRankingServiceTests(unittest.TestCase):
 
         self.assertEqual(ranked[0].file_id, "2")
 
+    def test_correct_episode_beats_higher_quality_wrong_episode(self) -> None:
+        results = [
+            self.result("1", "Dark.S01E04.1080p.BluRay", downloads=50000),
+            self.result("2", "Dark.S01E03.720p.WEB-DL", downloads=1000),
+        ]
+
+        ranked = self.service.rank(results, "dark s01e03")
+
+        self.assertEqual(ranked[0].file_id, "2")
+
+    def test_correct_year_beats_higher_quality_wrong_year(self) -> None:
+        results = [
+            self.result("1", "Avatar.2022.1080p.BluRay", downloads=50000),
+            self.result("2", "Avatar.2009.720p.WEB-DL", downloads=1000),
+        ]
+
+        ranked = self.service.rank(results, "avatar 2009")
+
+        self.assertEqual(ranked[0].file_id, "2")
+
     def test_english_ranked_first(self) -> None:
         results = [
             self.result("1", "Dark.S01E03.1080p.WEB-DL", language="bn", downloads=5000),

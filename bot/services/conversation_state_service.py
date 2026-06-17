@@ -16,12 +16,14 @@ pending_sync_requests: dict[int, "PendingSyncRequest"] = {}
 class PendingEpisodeRequest:
     """Pending TV episode clarification for a user."""
 
+    user_id: int
     tmdb_id: int | None
     title: str
-    original_query: str
-    normalized_title: str
-    year: int | None
+    media_type: str
     created_at: datetime
+    original_query: str = ""
+    normalized_title: str = ""
+    year: int | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,11 @@ class ConversationStateService:
     )
     EPISODE_OF_SEASON_PATTERN = re.compile(
         r"\bepisode\s+0*(?P<episode>\d{1,3})\s+of\s+season\s+"
+        r"0*(?P<season>\d{1,2})\b",
+        flags=re.IGNORECASE,
+    )
+    EPISODE_SEASON_PATTERN = re.compile(
+        r"\b(?:episode|ep)\s+0*(?P<episode>\d{1,3})\s+season\s+"
         r"0*(?P<season>\d{1,2})\b",
         flags=re.IGNORECASE,
     )
@@ -136,6 +143,7 @@ class ConversationStateService:
             self.COMPACT_EPISODE_PATTERN,
             self.SEASON_EPISODE_PATTERN,
             self.EPISODE_OF_SEASON_PATTERN,
+            self.EPISODE_SEASON_PATTERN,
         ):
             match = pattern.search(message)
             if match is not None:
@@ -149,7 +157,8 @@ class ConversationStateService:
         episode: int,
     ) -> str:
         """Combine a pending TV title with a parsed episode token."""
-        return f"{request.normalized_title} S{season:02d}E{episode:02d}"
+        title = request.normalized_title or request.title
+        return f"{title} S{season:02d}E{episode:02d}"
 
     def _cleanup_sync_file(self, file_path: Path) -> None:
         """Remove a retained subtitle sync file if it exists."""

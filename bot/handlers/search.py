@@ -6,6 +6,7 @@ from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from bot.models.search_result import SearchResult
+from bot.services.alias_service import AliasService
 from bot.services.tmdb_service import (
     InvalidTmdbApiKeyError,
     TmdbNetworkError,
@@ -33,12 +34,13 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def run_search_query(message: Message, query: str) -> None:
     """Resolve a movie or TV show query using TMDb."""
-    logger.info("Running TMDb search for query=%s", query)
+    resolved_query = AliasService().resolve(query)
+    logger.info("Running TMDb search for query=%s resolved_query=%s", query, resolved_query)
 
     try:
         settings = get_settings()
         service = TmdbService(settings.tmdb_api_key.get_secret_value())
-        results = service.multi_search(query)[:5]
+        results = service.multi_search(resolved_query)[:5]
     except ConfigError:
         logger.exception("Search command failed because configuration is invalid.")
         await message.reply_text("Search is not configured yet. Please check TMDB_API_KEY.")

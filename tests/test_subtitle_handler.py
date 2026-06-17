@@ -1,5 +1,6 @@
 """Tests for subtitle response formatting."""
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
 import tempfile
@@ -8,6 +9,8 @@ from unittest.mock import AsyncMock, patch
 
 from bot.handlers.subtitle import (
     build_download_callback_data,
+    build_episode_keyboard,
+    build_sync_keyboard,
     build_subtitle_keyboard,
     build_tmdb_identification_query,
     cleanup_temp_file,
@@ -17,6 +20,7 @@ from bot.handlers.subtitle import (
     parse_download_callback_data,
     retain_subtitle_for_sync,
     select_subtitle_results,
+    subtitle_download_callback,
     write_temp_subtitle_file,
     _last_download_by_user,
     run_subtitle_query,
@@ -86,6 +90,25 @@ class SubtitleHandlerTests(unittest.TestCase):
 
         self.assertEqual(button.text, "English | BluRay | 12k downloads")
         self.assertEqual(button.callback_data, "download_subtitle:101")
+
+    def test_build_episode_keyboard(self) -> None:
+        keyboard = build_episode_keyboard()
+        buttons = keyboard.inline_keyboard[0]
+
+        self.assertEqual(buttons[0].text, "Enter Episode")
+        self.assertEqual(buttons[0].callback_data, "episode:enter")
+        self.assertEqual(buttons[1].text, "Cancel")
+        self.assertEqual(buttons[1].callback_data, "episode:cancel")
+
+    def test_build_sync_keyboard(self) -> None:
+        keyboard = build_sync_keyboard()
+        buttons = keyboard.inline_keyboard[0]
+
+        self.assertEqual([button.text for button in buttons], ["Perfect", "Too Early", "Too Late"])
+        self.assertEqual(
+            [button.callback_data for button in buttons],
+            ["sync:perfect", "sync:early", "sync:late"],
+        )
 
     def test_select_subtitle_results_respects_top_10_limit_after_ranking(self) -> None:
         results = [
@@ -160,6 +183,7 @@ class SubtitleHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         pending_episode_requests.clear()
+        pending_sync_requests.clear()
 
     async def test_tv_show_without_episode_stores_pending_state(self) -> None:
         message = SimpleNamespace(
@@ -188,10 +212,46 @@ class SubtitleHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(1001, pending_episode_requests)
         self.assertEqual(pending_episode_requests[1001].title, "Game of Thrones")
-        message.reply_text.assert_awaited_once_with(
-            "Which episode do you need?\n\n"
-            "Example:\nGame of Thrones S01E01"
+        self.assertEqual(pending_episode_requests[1001].user_id, 1001)
+        self.assertEqual(pending_episode_requests[1001].media_type, "tv")
+        message.reply_text.assert_awaited_once()
+        self.assertEqual(
+            message.reply_text.await_args.args[0],
+            "Which episode do you need?\n\nExample: Game of Thrones S01E01",
         )
+        self.assertIsNotNone(message.reply_text.await_args.kwargs["reply_markup"])
+
+    async def test_episode_cancel_button_clears_pending_state(self) -> None:
+        pending_episode_requests[1001] = SimpleNamespace()
+        update = build_callback_update(1001, "episode:cancel")
+
+        await subtitle_download_callback(update, None)
+
+        self.assertNotIn(1001, pending_episode_requests)
+        update.callback_query.answer.assert_awaited_once_with("Cancelled.")
+        update.callback_query.message.reply_text.assert_awaited_once_with(
+            "Cancelled. Send a title when you're ready."
+        )
+
+    async def test_sync_early_button_asks_for_amount(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "subtitle.srt"
+            file_path.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n", encoding="utf-8")
+            pending_sync_requests[1001] = SimpleNamespace(
+                file_path=file_path,
+                original_file_name="subtitle.srt",
+                created_at=datetime.now(timezone.utc),
+                direction=None,
+            )
+            update = build_callback_update(1001, "sync:early")
+
+            await subtitle_download_callback(update, None)
+
+        update.callback_query.answer.assert_awaited_once_with("How much?")
+        update.callback_query.message.reply_text.assert_awaited_once_with(
+            "How much?\nExamples:\n1s\n2s\n5s"
+        )
+        self.assertEqual(pending_sync_requests[1001].direction, "early")
 
 
 def fake_settings() -> SimpleNamespace:
@@ -201,6 +261,18 @@ def fake_settings() -> SimpleNamespace:
         tmdb_api_key=secret,
         groq_api_key=secret,
         opensubtitles_api_key=secret,
+    )
+
+
+def build_callback_update(user_id: int, data: str) -> SimpleNamespace:
+    """Build a minimal Telegram callback update stand-in."""
+    return SimpleNamespace(
+        callback_query=SimpleNamespace(
+            data=data,
+            from_user=SimpleNamespace(id=user_id),
+            message=SimpleNamespace(reply_text=AsyncMock()),
+            answer=AsyncMock(),
+        )
     )
 
 
