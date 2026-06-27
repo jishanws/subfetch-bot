@@ -18,12 +18,26 @@ from bot.handlers import register_handlers
 from bot.health_server import start_health_server
 from config import get_settings
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
 logger = logging.getLogger(__name__)
 BOT_LOCK_PATH = Path("/tmp/subfetch-bot.lock")
+NOISY_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "telegram",
+    "telegram.ext",
+    "telegram.request",
+    "bot.handlers",
+)
+
+
+def configure_logging() -> None:
+    """Configure production-safe logging without request URLs or secrets."""
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
+    for logger_name in NOISY_LOGGERS:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 def mask_token(token: str) -> str:
@@ -82,6 +96,8 @@ def create_application(token: str, proxy_url: str | None = None) -> Application:
 
 def main() -> None:
     """Run the bot in polling mode."""
+    configure_logging()
+
     try:
         settings = get_settings()
     except Exception as e:
@@ -90,22 +106,21 @@ def main() -> None:
 
     token = settings.telegram_bot_token.get_secret_value()
     proxy_url = settings.proxy_url.get_secret_value() if settings.proxy_url else None
+    subdl_enabled = bool(settings.subdl_api_key)
 
     with single_instance_lock():
         install_shutdown_handlers()
         application = create_application(token, proxy_url)
 
-        logger.info("Bot token loaded successfully: %s", mask_token(token))
-        if proxy_url:
-            logger.info("Using Telegram proxy: %s", mask_proxy_host(proxy_url))
-        else:
-            logger.info("No PROXY_URL configured. Telegram will connect directly.")
-        logger.info("Attempting to connect to Telegram API...")
-        logger.info("Starting subfetch-bot in polling mode.")
+        logger.info("SubFetchBot app started.")
+        logger.info("Telegram proxy %s.", "enabled" if proxy_url else "disabled")
+        logger.info("SubDL provider %s.", "enabled" if subdl_enabled else "disabled")
 
         start_health_server()
+        logger.info("Health server started.")
 
         try:
+            logger.info("Telegram polling started.")
             application.run_polling()
         except InvalidToken:
             logger.error("Startup failed: Invalid bot token provided. Check your TELEGRAM_BOT_TOKEN in .env.")

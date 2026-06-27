@@ -27,7 +27,7 @@ def root():
 def run_server():
     """Run the Uvicorn server synchronously."""
     port = int(os.environ.get("PORT", "10000"))
-    logger.info("Starting health server on 0.0.0.0:%d", port)
+    logger.debug("Starting health server on 0.0.0.0:%d", port)
     # log_level="warning" to avoid spamming the bot's standard logs
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 

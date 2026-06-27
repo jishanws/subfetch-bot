@@ -128,7 +128,9 @@ Build subfetch-bot from the source and install dependencies:
 	**Using [pip](https://pypi.org/project/pip/):**
 
 	```sh
-	❯ pip install -r requirements.txt
+	❯ python3 -m venv .venv
+	❯ source .venv/bin/activate
+	❯ python3 -m pip install -r requirements.txt
 	```
 
 ### Usage
@@ -137,7 +139,7 @@ Run the project with:
 
 **Using [pip](https://pypi.org/project/pip/):**
 ```sh
-python main.py
+python3 main.py
 ```
 
 ### Testing
